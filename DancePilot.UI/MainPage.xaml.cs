@@ -81,7 +81,7 @@ public sealed partial class MainPage : Page
         var item = FindQueueItemFromDropTarget(source) ?? list.SelectedItem as DancePilotQueueItem;
         if (item is null)
         {
-            var deckName = ReferenceEquals(list, DeckBQueueList) ? "Deck B" : ViewModel.ActiveDeckName;
+            var deckName = ResolveDeckNameFromQueueList(list);
             ShowQueueClearFlyout(list, deckName, source);
             e.Handled = true;
             return;
@@ -171,6 +171,11 @@ public sealed partial class MainPage : Page
         await HandleDropToDeckAsync("Deck B", e);
     }
 
+    private async void DeckAQueueList_Drop(object sender, DragEventArgs e)
+    {
+        await HandleDropToDeckAsync("Deck A", e);
+    }
+
     private async void DeckBQueueList_Drop(object sender, DragEventArgs e)
     {
         await HandleDropToDeckAsync("Deck B", e);
@@ -205,6 +210,21 @@ public sealed partial class MainPage : Page
 
         _draggedItems = [];
         e.Handled = true;
+    }
+
+    private string ResolveDeckNameFromQueueList(ListView list)
+    {
+        if (ReferenceEquals(list, DeckAQueueList))
+        {
+            return "Deck A";
+        }
+
+        if (ReferenceEquals(list, DeckBQueueList))
+        {
+            return "Deck B";
+        }
+
+        return ViewModel.ActiveDeckName;
     }
 
     private static DancePilotQueueItem? FindQueueItemFromDropTarget(DependencyObject? source)

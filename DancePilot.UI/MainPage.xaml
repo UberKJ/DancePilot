@@ -185,21 +185,53 @@
                             </StackPanel>
                         </Grid>
 
-                        <StackPanel Grid.Row="2" Spacing="10" VerticalAlignment="Bottom">
-                            <ItemsControl Height="72" ItemsSource="{x:Bind ViewModel.CurrentWaveform, Mode=OneWay}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" />
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Rectangle Width="3" Height="{Binding Height}" Margin="1,0" VerticalAlignment="Center" Fill="{Binding Fill}" />
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                            <ProgressBar Height="4" Minimum="0" Maximum="{x:Bind ViewModel.SeekPositionMaximumSeconds, Mode=OneWay}" Value="{x:Bind ViewModel.SeekPositionSeconds, Mode=OneWay}" Foreground="{StaticResource YellowBrush}" Background="#2A3037" />
-                        </StackPanel>
+                        <ItemsControl Grid.Row="2" Height="42" ItemsSource="{x:Bind ViewModel.CurrentWaveform, Mode=OneWay}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Rectangle Width="3" Height="{Binding Height}" Margin="1,0" VerticalAlignment="Center" Fill="{Binding Fill}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <ListView
+                            x:Name="DeckAQueueList"
+                            Grid.Row="2"
+                            Margin="0,52,0,0"
+                            ItemsSource="{x:Bind ViewModel.DeckAQueueItems, Mode=OneWay}"
+                            SelectionMode="Extended"
+                            CanDragItems="True"
+                            AllowDrop="True"
+                            CanReorderItems="True"
+                            DragItemsStarting="QueueList_DragItemsStarting"
+                            DragOver="QueueList_DragOver"
+                            Drop="DeckAQueueList_Drop"
+                            DoubleTapped="QueueList_DoubleTapped"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            ItemContainerStyle="{StaticResource ListItemStyle}">
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="spotify:DancePilotQueueItem">
+                                    <Grid Padding="8,5" ColumnSpacing="8" BorderBrush="#17212A" BorderThickness="0,0,0,1">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="34" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="88" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{x:Bind QueuePosition}" Foreground="{StaticResource YellowBrush}" FontWeight="Bold" VerticalAlignment="Center" />
+                                        <StackPanel Grid.Column="1" Spacing="1">
+                                            <TextBlock Text="{x:Bind Title}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{x:Bind Artist}" Foreground="{StaticResource MutedTextBrush}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="2" Text="{x:Bind MixDisplay}" Foreground="{StaticResource GreenBrush}" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
 
                         <Grid Grid.Row="3" ColumnSpacing="8">
                             <Grid.ColumnDefinitions>
