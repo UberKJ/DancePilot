@@ -15,6 +15,8 @@ namespace DancePilot.UI;
 /// </summary>
 public sealed partial class MainWindow : Window
 {
+    private bool _mainPageNavigationStarted;
+
     public MainWindow()
     {
         StartupLog.Write("MainWindow constructor start");
@@ -30,29 +32,32 @@ public sealed partial class MainWindow : Window
         }
 
         AppWindow.SetIcon("Assets/AppIcon.ico");
+        NavigateToMainPage("MainWindow constructor");
 
-        Activated += (_, _) =>
-        {
-            if (RootFrame.Content is null)
-            {
-                StartupLog.Write("MainWindow activated; queueing MainPage navigation");
-                DispatcherQueue.TryEnqueue(() =>
-                {
-                    try
-                    {
-                        StartupLog.Write("MainPage navigation start");
-                        RootFrame.Navigate(typeof(MainPage));
-                        StartupLog.Write("MainPage navigation complete");
-                    }
-                    catch (Exception ex)
-                    {
-                        StartupLog.Write(ex, "MainPage navigation failed");
-                        throw;
-                    }
-                });
-            }
-        };
+        Activated += (_, _) => NavigateToMainPage("MainWindow activated fallback");
 
         StartupLog.Write("MainWindow constructor complete");
+    }
+
+    private void NavigateToMainPage(string context)
+    {
+        if (_mainPageNavigationStarted || RootFrame.Content is not null)
+        {
+            return;
+        }
+
+        _mainPageNavigationStarted = true;
+        try
+        {
+            StartupLog.Write($"{context}; MainPage navigation start");
+            RootFrame.Navigate(typeof(MainPage));
+            StartupLog.Write($"{context}; MainPage navigation complete");
+        }
+        catch (Exception ex)
+        {
+            _mainPageNavigationStarted = false;
+            StartupLog.Write(ex, $"{context}; MainPage navigation failed");
+            throw;
+        }
     }
 }
