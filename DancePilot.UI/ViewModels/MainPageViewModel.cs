@@ -971,9 +971,9 @@ public sealed class MainPageViewModel : ObservableObject
 
     public IRelayCommand ClearDeckBQueueCommand { get; }
 
-    public ObservableCollection<WaveBar> CurrentWaveform { get; } = CreateWaveform("#F4B400", "#8E949A");
+    public ObservableCollection<WaveBar> CurrentWaveform { get; } = CreateWaveform();
 
-    public ObservableCollection<WaveBar> NextWaveform { get; } = CreateWaveform("#1EA7FF", "#274357");
+    public ObservableCollection<WaveBar> NextWaveform { get; } = CreateWaveform();
 
     public ObservableCollection<FrequencyBand> FrequencyAnalyzer { get; } = CreateFrequencyBands();
 
@@ -1015,7 +1015,7 @@ public sealed class MainPageViewModel : ObservableObject
         new RemoteAction("Skip / Next", "\uE8AD", Brush("#303743"))
     ];
 
-    private static ObservableCollection<WaveBar> CreateWaveform(string primary, string secondary)
+    private static ObservableCollection<WaveBar> CreateWaveform()
     {
         double[] heights =
         [
@@ -1027,7 +1027,9 @@ public sealed class MainPageViewModel : ObservableObject
         var bars = new ObservableCollection<WaveBar>();
         for (var index = 0; index < heights.Length; index++)
         {
-            bars.Add(new WaveBar(heights[index], Brush(index < 32 ? primary : secondary)));
+            var energy = Math.Clamp((heights[index] - 8) / 68d, 0, 1);
+            var bandPosition = index / Math.Max(1d, heights.Length - 1d);
+            bars.Add(new WaveBar(heights[index], WaveformBrush(bandPosition, energy, bandPosition > 0.72 ? energy : 0, active: false)));
         }
 
         return bars;
@@ -1053,31 +1055,75 @@ public sealed class MainPageViewModel : ObservableObject
         _analyzerFrame++;
         var deckASeed = ResolveDeckDisplayItem("Deck A")?.Id ?? _playingDeckQueueItemId ?? 0;
         var deckBSeed = ResolveDeckDisplayItem("Deck B")?.Id ?? FindTransitionTarget()?.Id ?? 0;
-        UpdateAnalyzer(CurrentWaveform, "#F4B400", "#4A5560", IsDeckPlaying("Deck A"), _analyzerFrame, deckASeed);
-        UpdateAnalyzer(NextWaveform, "#1EA7FF", "#274357", IsDeckPlaying("Deck B"), _analyzerFrame + 11, deckBSeed);
+        UpdateAnalyzer(CurrentWaveform, IsDeckPlaying("Deck A"), _analyzerFrame, deckASeed);
+        UpdateAnalyzer(NextWaveform, IsDeckPlaying("Deck B"), _analyzerFrame + 11, deckBSeed);
         UpdateFrequencyAnalyzer(IsPlaybackPlaying, _analyzerFrame, _playingDeckQueueItemId ?? deckASeed);
     }
 
-    private static void UpdateAnalyzer(ObservableCollection<WaveBar> bars, string primary, string secondary, bool active, int phase, int seed)
+    private void UpdateAnalyzer(ObservableCollection<WaveBar> bars, bool active, int phase, int seed)
     {
         const int count = 60;
         var seedPhase = (seed % 29) * 0.17;
+        var lowGain = Math.Clamp(1 + (LowFrequencyGain / 12d) * 0.42, 0.45, 1.65);
+        var midGain = Math.Clamp(1 + (MidFrequencyGain / 12d) * 0.36, 0.50, 1.55);
+        var highGain = Math.Clamp(1 + (HighFrequencyGain / 12d) * 0.48, 0.40, 1.75);
         bars.Clear();
         for (var index = 0; index < count; index++)
         {
             var band = index / (count - 1d);
             var idleShape = 8 + Math.Abs(Math.Sin((index * 0.42) + seedPhase)) * 11;
-            var bass = Math.Pow(Math.Max(0, Math.Sin((phase * 0.34) + seedPhase)), 2) * (1 - band) * 48;
+            var lowWeight = Math.Max(0, 1 - band * 1.45);
+            var midWeight = Math.Max(0, 1 - Math.Abs(band - 0.48) * 1.8);
+            var highWeight = Math.Pow(band, 1.35);
+            var bass = Math.Pow(Math.Max(0, Math.Sin((phase * 0.34) + seedPhase)), 2) * lowWeight * 48 * lowGain;
             var mid = Math.Pow(Math.Max(0, Math.Sin((phase * 0.21) + (index * 0.31) + seedPhase)), 2)
-                * Math.Max(0, 1 - Math.Abs(band - 0.48) * 1.8)
-                * 34;
-            var high = (0.5 + Math.Sin((phase * 0.63) + (index * 0.83) + seedPhase) * 0.5) * band * 18;
+                * midWeight
+                * 34
+                * midGain;
+            var high = (0.5 + Math.Sin((phase * 0.63) + (index * 0.83) + seedPhase) * 0.5) * highWeight * 24 * highGain;
             var baseHeight = active
                 ? 10 + bass + mid + high
-                : idleShape;
+                : idleShape + (lowWeight * 3 * lowGain) + (midWeight * 2 * midGain) + (highWeight * 4 * highGain);
             var height = Math.Clamp(baseHeight, 8, 76);
-            bars.Add(new WaveBar(height, Brush(active || index % 7 == 0 ? primary : secondary)));
+            var energy = Math.Clamp((height - 8) / 68d, 0, 1);
+            var highPresence = Math.Clamp(high / 24d, 0, 1);
+            bars.Add(new WaveBar(height, WaveformBrush(band, energy, highPresence, active)));
         }
+    }
+
+    private static SolidColorBrush WaveformBrush(double bandPosition, double energy, double highPresence, bool active)
+    {
+        var baseColor = bandPosition switch
+        {
+            < 0.14 => ParseColor("#F25D4D"),
+            < 0.28 => ParseColor("#FF8A1C"),
+            < 0.42 => ParseColor("#F4B400"),
+            < 0.56 => ParseColor("#32E76A"),
+            < 0.70 => ParseColor("#1EA7FF"),
+            < 0.84 => ParseColor("#B875FF"),
+            _ => ParseColor("#FF7AB6")
+        };
+
+        var brightness = active
+            ? 0.58 + energy * 0.52
+            : 0.24 + energy * 0.34;
+        if (bandPosition >= 0.66)
+        {
+            brightness += highPresence * (active ? 0.38 : 0.18);
+        }
+
+        var color = ScaleBrightness(baseColor, Math.Clamp(brightness, 0.20, 1.32));
+        if (bandPosition >= 0.74 && highPresence > 0.08)
+        {
+            color = Blend(color, ParseColor("#FFFFFF"), Math.Clamp(highPresence * 0.24, 0, 0.28));
+        }
+
+        if (!active)
+        {
+            color = Blend(color, ParseColor("#4A5560"), 0.42);
+        }
+
+        return Brush(color);
     }
 
     private void UpdateFrequencyAnalyzer(bool active, int phase, int seed)
@@ -1108,11 +1154,42 @@ public sealed class MainPageViewModel : ObservableObject
 
     private static SolidColorBrush Brush(string hex)
     {
+        return Brush(ParseColor(hex));
+    }
+
+    private static SolidColorBrush Brush(Windows.UI.Color color)
+    {
+        return new SolidColorBrush(color);
+    }
+
+    private static Windows.UI.Color ParseColor(string hex)
+    {
         var value = hex.TrimStart('#');
         var r = Convert.ToByte(value[..2], 16);
         var g = Convert.ToByte(value.Substring(2, 2), 16);
         var b = Convert.ToByte(value.Substring(4, 2), 16);
-        return new SolidColorBrush(ColorHelper.FromArgb(255, r, g, b));
+        return ColorHelper.FromArgb(255, r, g, b);
+    }
+
+    private static Windows.UI.Color ScaleBrightness(Windows.UI.Color color, double factor)
+    {
+        static byte Scale(byte channel, double factor) =>
+            Convert.ToByte(Math.Clamp(channel * factor, 0, 255));
+
+        return ColorHelper.FromArgb(color.A, Scale(color.R, factor), Scale(color.G, factor), Scale(color.B, factor));
+    }
+
+    private static Windows.UI.Color Blend(Windows.UI.Color source, Windows.UI.Color target, double amount)
+    {
+        var clamped = Math.Clamp(amount, 0, 1);
+        static byte Mix(byte source, byte target, double amount) =>
+            Convert.ToByte(Math.Clamp(source + ((target - source) * amount), 0, 255));
+
+        return ColorHelper.FromArgb(
+            source.A,
+            Mix(source.R, target.R, clamped),
+            Mix(source.G, target.G, clamped),
+            Mix(source.B, target.B, clamped));
     }
 
     private static string FormatGain(double value) =>
