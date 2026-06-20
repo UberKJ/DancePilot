@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Windowing;
 using DancePilot.UI.Diagnostics;
 using Windows.Graphics;
 
@@ -23,6 +24,11 @@ public sealed partial class MainWindow : Window
         SetTitleBar(AppTitleBar);
 
         AppWindow.Resize(new SizeInt32(1600, 960));
+        if (AppWindow.Presenter is OverlappedPresenter presenter)
+        {
+            presenter.Maximize();
+        }
+
         AppWindow.SetIcon("Assets/AppIcon.ico");
 
         Activated += (_, _) =>

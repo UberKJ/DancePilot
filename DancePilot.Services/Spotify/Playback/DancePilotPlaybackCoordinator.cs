@@ -51,6 +51,7 @@ public sealed class DancePilotPlaybackCoordinator
             SpotifyTrackId = string.Empty,
             Title = next.Title,
             Artist = next.Artist,
+            AlbumArtUrl = next.AlbumArtUrl,
             DurationMs = 0,
             SpotifyUri = next.ExternalUri
         };
@@ -69,6 +70,7 @@ public sealed class DancePilotPlaybackCoordinator
             SpotifyTrackId = string.Empty,
             Title = queueItem.Title,
             Artist = queueItem.Artist,
+            AlbumArtUrl = queueItem.AlbumArtUrl,
             DurationMs = 0,
             SpotifyUri = queueItem.ExternalUri
         }, "Started from DancePilot queue.", cancellationToken);

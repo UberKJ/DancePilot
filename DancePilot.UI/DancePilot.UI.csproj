@@ -35,6 +35,7 @@
     <Content Include="Assets\AlbumRockinRobin.png" />
     <Content Include="Assets\AlbumCountryRoad.png" />
     <Content Include="Assets\AlbumDanceFloor.png" />
+    <Content Include="Assets\AlbumCovers\*.jpg" />
   </ItemGroup>
 
   <ItemGroup>

@@ -15,6 +15,14 @@ public sealed class PlaybackSettingsRepository
     private const string DeckTransitionEnabledKey = "deck_transition_enabled";
     private const string DeckTransitionSecondsBeforeEndKey = "deck_transition_seconds_before_end";
     private const string DeckTransitionModeKey = "deck_transition_mode";
+    private const string FadeInSecondsKey = "deck_fade_in_seconds";
+    private const string FadeOutSecondsKey = "deck_fade_out_seconds";
+    private const string AlwaysFadeSongsKey = "deck_always_fade_songs";
+    private const string StartTransitionOnFadeKey = "deck_start_transition_on_fade";
+    private const string LowFrequencyGainKey = "mixer_low_frequency_gain";
+    private const string MidFrequencyGainKey = "mixer_mid_frequency_gain";
+    private const string HighFrequencyGainKey = "mixer_high_frequency_gain";
+    private const string CrossfaderPositionKey = "mixer_crossfader_position";
 
     private readonly SqliteConnectionFactory _connectionFactory;
     private readonly DancePilotDatabaseMigrator _migrator;
@@ -40,7 +48,15 @@ public sealed class PlaybackSettingsRepository
             DefaultVolume = ParseInt(settings.GetValueOrDefault(DefaultVolumeKey), 70),
             DeckTransitionEnabled = !bool.TryParse(settings.GetValueOrDefault(DeckTransitionEnabledKey), out var transitionEnabled) || transitionEnabled,
             DeckTransitionSecondsBeforeEnd = ParseInt(settings.GetValueOrDefault(DeckTransitionSecondsBeforeEndKey), 8),
-            DeckTransitionMode = settings.GetValueOrDefault(DeckTransitionModeKey, "Same deck next item")
+            DeckTransitionMode = settings.GetValueOrDefault(DeckTransitionModeKey, "Same deck next item"),
+            FadeInSeconds = ParseInt(settings.GetValueOrDefault(FadeInSecondsKey), 4),
+            FadeOutSeconds = ParseInt(settings.GetValueOrDefault(FadeOutSecondsKey), 8),
+            AlwaysFadeSongs = !bool.TryParse(settings.GetValueOrDefault(AlwaysFadeSongsKey), out var alwaysFadeSongs) || alwaysFadeSongs,
+            StartTransitionOnFade = !bool.TryParse(settings.GetValueOrDefault(StartTransitionOnFadeKey), out var startTransitionOnFade) || startTransitionOnFade,
+            LowFrequencyGain = ParseInt(settings.GetValueOrDefault(LowFrequencyGainKey), 0),
+            MidFrequencyGain = ParseInt(settings.GetValueOrDefault(MidFrequencyGainKey), 0),
+            HighFrequencyGain = ParseInt(settings.GetValueOrDefault(HighFrequencyGainKey), 0),
+            CrossfaderPosition = ParseInt(settings.GetValueOrDefault(CrossfaderPositionKey), 50)
         };
     }
 
@@ -56,6 +72,14 @@ public sealed class PlaybackSettingsRepository
         await SetAsync(DeckTransitionEnabledKey, settings.DeckTransitionEnabled.ToString(), cancellationToken);
         await SetAsync(DeckTransitionSecondsBeforeEndKey, settings.DeckTransitionSecondsBeforeEnd.ToString(), cancellationToken);
         await SetAsync(DeckTransitionModeKey, settings.DeckTransitionMode, cancellationToken);
+        await SetAsync(FadeInSecondsKey, settings.FadeInSeconds.ToString(), cancellationToken);
+        await SetAsync(FadeOutSecondsKey, settings.FadeOutSeconds.ToString(), cancellationToken);
+        await SetAsync(AlwaysFadeSongsKey, settings.AlwaysFadeSongs.ToString(), cancellationToken);
+        await SetAsync(StartTransitionOnFadeKey, settings.StartTransitionOnFade.ToString(), cancellationToken);
+        await SetAsync(LowFrequencyGainKey, settings.LowFrequencyGain.ToString(), cancellationToken);
+        await SetAsync(MidFrequencyGainKey, settings.MidFrequencyGain.ToString(), cancellationToken);
+        await SetAsync(HighFrequencyGainKey, settings.HighFrequencyGain.ToString(), cancellationToken);
+        await SetAsync(CrossfaderPositionKey, settings.CrossfaderPosition.ToString(), cancellationToken);
     }
 
     private async Task<Dictionary<string, string>> ReadAllAsync(CancellationToken cancellationToken)

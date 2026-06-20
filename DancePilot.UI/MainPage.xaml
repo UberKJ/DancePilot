@@ -80,9 +80,9 @@
         RowSpacing="10">
             <Grid.RowDefinitions>
                 <RowDefinition Height="58" />
-                <RowDefinition Height="300" />
+                <RowDefinition Height="390" />
                 <RowDefinition Height="*" />
-                <RowDefinition Height="106" />
+                <RowDefinition Height="118" />
             </Grid.RowDefinitions>
 
             <Border Background="{StaticResource TopChromeBrush}" BorderBrush="#141D26" BorderThickness="1" CornerRadius="6">
@@ -105,7 +105,7 @@
 
                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
                         <TextBlock Text="{x:Bind ViewModel.SpotifyOperationMessage, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" TextTrimming="CharacterEllipsis" />
-                        <TextBlock Text="Double-click any song row to queue it on the active deck." Foreground="{StaticResource MutedTextBrush}" FontSize="12" />
+                        <TextBlock Text="Double-click source rows to queue; double-click queue rows for actions." Foreground="{StaticResource MutedTextBrush}" FontSize="12" />
                     </StackPanel>
 
                     <Border Grid.Column="2" Background="#0D1913" BorderBrush="#183B25" BorderThickness="1" CornerRadius="5" Padding="12,6">
@@ -147,29 +147,41 @@
                     <ColumnDefinition Width="360" />
                 </Grid.ColumnDefinitions>
 
-                <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource YellowBrush}" BorderThickness="1" CornerRadius="6" Padding="16">
+                <Border
+                    x:Name="DeckADropTarget"
+                    Background="{StaticResource PanelBrush}"
+                    BorderBrush="{StaticResource YellowBrush}"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="16"
+                    AllowDrop="True"
+                    DragOver="DeckDropTarget_DragOver"
+                    Drop="DeckADropTarget_Drop">
                     <Grid RowSpacing="12">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <Grid>
-                        <TextBlock Text="{x:Bind ViewModel.CurrentDeckHeader, Mode=OneWay}" Foreground="{StaticResource YellowBrush}" Style="{StaticResource PanelTitleStyle}" />
-                            <TextBlock Text="{x:Bind ViewModel.SpotifyPlaybackStatus, Mode=OneWay}" Foreground="{StaticResource GreenBrush}" FontSize="13" FontWeight="Bold" HorizontalAlignment="Right" />
+                            <TextBlock Text="{x:Bind ViewModel.CurrentDeckHeader, Mode=OneWay}" Foreground="{StaticResource YellowBrush}" Style="{StaticResource PanelTitleStyle}" />
+                            <TextBlock Text="{x:Bind ViewModel.DeckAStatus, Mode=OneWay}" Foreground="{StaticResource GreenBrush}" FontSize="13" FontWeight="Bold" HorizontalAlignment="Right" />
                         </Grid>
 
                         <Grid Grid.Row="1" ColumnSpacing="16">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="92" />
+                                <ColumnDefinition Width="100" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <Image Width="88" Height="88" Source="Assets/AlbumBlueSuede.png" Stretch="UniformToFill" />
+                            <Border Width="96" Height="96" Background="#111922" BorderBrush="#2F3C48" BorderThickness="1" CornerRadius="6" Padding="2">
+                                <Image Source="{x:Bind ViewModel.CurrentDeckAlbumArt, Mode=OneWay}" Stretch="UniformToFill" />
+                            </Border>
                             <StackPanel Grid.Column="1" Spacing="5" VerticalAlignment="Center">
-                                <TextBlock Text="{x:Bind ViewModel.SpotifyNowPlayingTitle, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="20" FontWeight="Bold" TextWrapping="WrapWholeWords" MaxLines="2" />
-                                <TextBlock Text="{x:Bind ViewModel.SpotifyNowPlayingArtist, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="15" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="{x:Bind ViewModel.SpotifyProgressDisplay, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" />
+                                <TextBlock Text="{x:Bind ViewModel.DeckATitle, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="20" FontWeight="Bold" TextWrapping="WrapWholeWords" MaxLines="2" />
+                                <TextBlock Text="{x:Bind ViewModel.DeckAArtist, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="15" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{x:Bind ViewModel.DeckADetail, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" />
                             </StackPanel>
                         </Grid>
 
@@ -186,37 +198,58 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-                            <ProgressBar Height="4" Minimum="0" Maximum="600" Value="{x:Bind ViewModel.SeekPositionSeconds, Mode=OneWay}" Foreground="{StaticResource YellowBrush}" Background="#2A3037" />
+                            <ProgressBar Height="4" Minimum="0" Maximum="{x:Bind ViewModel.SeekPositionMaximumSeconds, Mode=OneWay}" Value="{x:Bind ViewModel.SeekPositionSeconds, Mode=OneWay}" Foreground="{StaticResource YellowBrush}" Background="#2A3037" />
                         </StackPanel>
+
+                        <Grid Grid.Row="3" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button Command="{x:Bind ViewModel.SelectDeckACommand}" Content="SELECT A" Style="{StaticResource ChromeButtonStyle}" MinHeight="34" />
+                            <Button Grid.Column="1" Command="{x:Bind ViewModel.RandomizePlaylistToDeckACommand}" Content="RANDOMIZE" Style="{StaticResource ChromeButtonStyle}" MinHeight="34" />
+                            <Button Grid.Column="2" Command="{x:Bind ViewModel.ClearDeckAQueueCommand}" Content="CLEAR QUEUE" Style="{StaticResource DangerButtonStyle}" MinHeight="34" />
+                        </Grid>
                     </Grid>
                 </Border>
 
-                <Border Grid.Column="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BlueBrush}" BorderThickness="1" CornerRadius="6" Padding="16">
+                <Border
+                    x:Name="DeckBDropTarget"
+                    Grid.Column="1"
+                    Background="{StaticResource PanelBrush}"
+                    BorderBrush="{StaticResource BlueBrush}"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="16"
+                    AllowDrop="True"
+                    DragOver="DeckDropTarget_DragOver"
+                    Drop="DeckBDropTarget_Drop">
                     <Grid RowSpacing="12">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <Grid>
                             <TextBlock Text="{x:Bind ViewModel.NextDeckHeader, Mode=OneWay}" Foreground="{StaticResource BlueBrush}" Style="{StaticResource PanelTitleStyle}" />
-                            <TextBlock Text="{x:Bind ViewModel.NextUpArtist, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{x:Bind ViewModel.DeckBStatus, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" />
                         </Grid>
 
                         <Grid Grid.Row="1" ColumnSpacing="16">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="92" />
+                                <ColumnDefinition Width="100" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <Image Width="88" Height="88" Source="Assets/AlbumRockinRobin.png" Stretch="UniformToFill" />
+                            <Border Width="96" Height="96" Background="#111922" BorderBrush="#2F3C48" BorderThickness="1" CornerRadius="6" Padding="2">
+                                <Image Source="{x:Bind ViewModel.NextDeckAlbumArt, Mode=OneWay}" Stretch="UniformToFill" />
+                            </Border>
                             <StackPanel Grid.Column="1" Spacing="5" VerticalAlignment="Center">
-                                <TextBlock Text="{x:Bind ViewModel.NextUpTitle, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="20" FontWeight="Bold" TextWrapping="WrapWholeWords" MaxLines="2" />
-                                <TextBlock Text="{x:Bind ViewModel.SourceInstruction, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" TextWrapping="WrapWholeWords" />
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Button Command="{x:Bind ViewModel.SelectDeckACommand}" Content="DECK A" Style="{StaticResource ChromeButtonStyle}" MinWidth="88" />
-                                    <Button Command="{x:Bind ViewModel.SelectDeckBCommand}" Content="DECK B" Style="{StaticResource ChromeButtonStyle}" MinWidth="88" />
-                                </StackPanel>
+                                <TextBlock Text="{x:Bind ViewModel.DeckBTitle, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="20" FontWeight="Bold" TextWrapping="WrapWholeWords" MaxLines="2" />
+                                <TextBlock Text="{x:Bind ViewModel.DeckBArtist, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="15" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{x:Bind ViewModel.DeckBDetail, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" TextWrapping="WrapWholeWords" />
                             </StackPanel>
                         </Grid>
 
@@ -234,12 +267,18 @@
                         </ItemsControl>
 
                         <ListView
-                            x:Name="ActiveDeckQueueList"
+                            x:Name="DeckBQueueList"
                             Grid.Row="2"
                             Margin="0,52,0,0"
-                            ItemsSource="{x:Bind ViewModel.ActiveDeckQueue, Mode=OneWay}"
-                            SelectedItem="{x:Bind ViewModel.SelectedActiveDeckQueueItem, Mode=TwoWay}"
-                            DoubleTapped="ActiveDeckQueueList_DoubleTapped"
+                            ItemsSource="{x:Bind ViewModel.DeckBQueueItems, Mode=OneWay}"
+                            SelectionMode="Extended"
+                            CanDragItems="True"
+                            AllowDrop="True"
+                            CanReorderItems="True"
+                            DragItemsStarting="QueueList_DragItemsStarting"
+                            DragOver="QueueList_DragOver"
+                            Drop="DeckBQueueList_Drop"
+                            DoubleTapped="QueueList_DoubleTapped"
                             Background="Transparent"
                             BorderThickness="0"
                             ItemContainerStyle="{StaticResource ListItemStyle}">
@@ -249,21 +288,34 @@
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="34" />
                                             <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="88" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Text="{x:Bind QueuePosition}" Foreground="{StaticResource BlueBrush}" FontWeight="Bold" VerticalAlignment="Center" />
                                         <StackPanel Grid.Column="1" Spacing="1">
                                             <TextBlock Text="{x:Bind Title}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                                             <TextBlock Text="{x:Bind Artist}" Foreground="{StaticResource MutedTextBrush}" FontSize="12" TextTrimming="CharacterEllipsis" />
                                         </StackPanel>
+                                        <TextBlock Grid.Column="2" Text="{x:Bind MixDisplay}" Foreground="{StaticResource GreenBrush}" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                                     </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
+
+                        <Grid Grid.Row="3" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button Command="{x:Bind ViewModel.SelectDeckBCommand}" Content="SELECT B" Style="{StaticResource ChromeButtonStyle}" MinHeight="34" />
+                            <Button Grid.Column="1" Command="{x:Bind ViewModel.RandomizePlaylistToDeckBCommand}" Content="RANDOMIZE" Style="{StaticResource ChromeButtonStyle}" MinHeight="34" />
+                            <Button Grid.Column="2" Command="{x:Bind ViewModel.ClearDeckBQueueCommand}" Content="CLEAR QUEUE" Style="{StaticResource DangerButtonStyle}" MinHeight="34" />
+                        </Grid>
                     </Grid>
                 </Border>
 
                 <Border Grid.Column="2" Background="#130D1D" BorderBrush="#5C2782" BorderThickness="1" CornerRadius="6" Padding="14">
-                    <StackPanel Spacing="12">
+                    <StackPanel Spacing="8">
                         <Grid>
                             <TextBlock Text="TRANSITION" Foreground="{StaticResource PurpleBrush}" Style="{StaticResource SectionTitleStyle}" />
                             <ToggleButton
@@ -289,7 +341,110 @@
                             <Slider Minimum="1" Maximum="45" Value="{x:Bind ViewModel.TransitionSecondsBeforeEnd, Mode=TwoWay}" />
                             <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.TransitionSecondsDisplay, Mode=OneWay}" Foreground="{StaticResource GreenBrush}" FontSize="13" FontWeight="Bold" VerticalAlignment="Center" HorizontalAlignment="Right" />
                         </Grid>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <ToggleButton
+                                IsChecked="{x:Bind ViewModel.StartTransitionOnFade, Mode=TwoWay}"
+                                Content="{x:Bind ViewModel.StartTransitionOnFadeStatus, Mode=OneWay}"
+                                FontSize="12"
+                                FontWeight="Bold"
+                                MinHeight="30" />
+                            <ToggleButton
+                                Grid.Column="1"
+                                IsChecked="{x:Bind ViewModel.AlwaysFadeSongs, Mode=TwoWay}"
+                                Content="{x:Bind ViewModel.AlwaysFadeSongsStatus, Mode=OneWay}"
+                                FontSize="12"
+                                FontWeight="Bold"
+                                MinHeight="30" />
+                        </Grid>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.1*" />
+                                <ColumnDefinition Width="44" />
+                                <ColumnDefinition Width="1.1*" />
+                                <ColumnDefinition Width="44" />
+                            </Grid.ColumnDefinitions>
+                            <Slider Minimum="1" Maximum="30" Value="{x:Bind ViewModel.FadeOutSeconds, Mode=TwoWay}" />
+                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.FadeOutSecondsDisplay, Mode=OneWay}" Foreground="{StaticResource RedBrush}" FontSize="12" FontWeight="Bold" VerticalAlignment="Center" HorizontalAlignment="Right" />
+                            <Slider Grid.Column="2" Minimum="1" Maximum="20" Value="{x:Bind ViewModel.FadeInSeconds, Mode=TwoWay}" />
+                            <TextBlock Grid.Column="3" Text="{x:Bind ViewModel.FadeInSecondsDisplay, Mode=OneWay}" Foreground="{StaticResource GreenBrush}" FontSize="12" FontWeight="Bold" VerticalAlignment="Center" HorizontalAlignment="Right" />
+                        </Grid>
                         <TextBlock Text="{x:Bind ViewModel.SpotifyTransitionNotice, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" TextWrapping="WrapWholeWords" />
+                        <TextBlock Text="{x:Bind ViewModel.TransitionBehaviorNotice, Mode=OneWay}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextWrapping="WrapWholeWords" />
+                        <StackPanel Spacing="4">
+                            <Grid>
+                                <TextBlock Text="DECK MIXER" Foreground="{StaticResource YellowBrush}" FontSize="12" FontWeight="Bold" />
+                                <TextBlock Text="{x:Bind ViewModel.MixerStateDisplay, Mode=OneWay}" Foreground="{StaticResource MutedTextBrush}" FontSize="10" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="34" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="54" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="LOW" Foreground="{StaticResource RedBrush}" FontSize="11" FontWeight="Bold" VerticalAlignment="Center" />
+                                <Slider Grid.Column="1" Minimum="-12" Maximum="12" StepFrequency="1" Value="{x:Bind ViewModel.LowFrequencyGain, Mode=TwoWay}" />
+                                <TextBlock Grid.Column="2" Text="{x:Bind ViewModel.LowFrequencyGainDisplay, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" HorizontalAlignment="Right" />
+                            </Grid>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="34" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="54" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="MID" Foreground="{StaticResource GreenBrush}" FontSize="11" FontWeight="Bold" VerticalAlignment="Center" />
+                                <Slider Grid.Column="1" Minimum="-12" Maximum="12" StepFrequency="1" Value="{x:Bind ViewModel.MidFrequencyGain, Mode=TwoWay}" />
+                                <TextBlock Grid.Column="2" Text="{x:Bind ViewModel.MidFrequencyGainDisplay, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" HorizontalAlignment="Right" />
+                            </Grid>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="34" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="54" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="HIGH" Foreground="{StaticResource BlueBrush}" FontSize="11" FontWeight="Bold" VerticalAlignment="Center" />
+                                <Slider Grid.Column="1" Minimum="-12" Maximum="12" StepFrequency="1" Value="{x:Bind ViewModel.HighFrequencyGain, Mode=TwoWay}" />
+                                <TextBlock Grid.Column="2" Text="{x:Bind ViewModel.HighFrequencyGainDisplay, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" HorizontalAlignment="Right" />
+                            </Grid>
+                            <Grid>
+                                <TextBlock Text="CROSSFADER" Foreground="{StaticResource PurpleBrush}" FontSize="11" FontWeight="Bold" />
+                                <TextBlock Text="{x:Bind ViewModel.CrossfaderDisplay, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                            </Grid>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="24" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="24" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="A" Foreground="{StaticResource YellowBrush}" FontSize="12" FontWeight="Bold" VerticalAlignment="Center" />
+                                <Slider Grid.Column="1" Minimum="0" Maximum="100" StepFrequency="1" Value="{x:Bind ViewModel.CrossfaderPosition, Mode=TwoWay}" />
+                                <TextBlock Grid.Column="2" Text="B" Foreground="{StaticResource BlueBrush}" FontSize="12" FontWeight="Bold" VerticalAlignment="Center" HorizontalAlignment="Right" />
+                            </Grid>
+                        </StackPanel>
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="FREQUENCY ANALYZER" Foreground="{StaticResource BlueBrush}" FontSize="12" FontWeight="Bold" />
+                            <ItemsControl Height="66" ItemsSource="{x:Bind ViewModel.FrequencyAnalyzer, Mode=OneWay}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Width="32" Spacing="2" HorizontalAlignment="Center">
+                                            <Grid Height="38" VerticalAlignment="Bottom">
+                                                <Rectangle Width="16" Height="{Binding Level}" Fill="{Binding Fill}" RadiusX="2" RadiusY="2" VerticalAlignment="Bottom" HorizontalAlignment="Center" />
+                                            </Grid>
+                                            <TextBlock Text="{Binding Label}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" />
+                                            <TextBlock Text="{Binding Range}" Foreground="{StaticResource MutedTextBrush}" FontSize="9" HorizontalAlignment="Center" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
 
@@ -400,9 +555,13 @@
                             <Button Grid.Column="2" Command="{x:Bind ViewModel.ImportSpotifyPlaylistCommand}" Content="IMPORT" Style="{StaticResource ChromeButtonStyle}" />
                         </Grid>
                         <ListView
+                            x:Name="SpotifyPlaylistsList"
                             Grid.Row="2"
                             ItemsSource="{x:Bind ViewModel.SpotifyPlaylists, Mode=OneWay}"
                             SelectedItem="{x:Bind ViewModel.SelectedSpotifyPlaylist, Mode=TwoWay}"
+                            SelectionMode="Extended"
+                            CanDragItems="True"
+                            DragItemsStarting="SourceList_DragItemsStarting"
                             Background="Transparent"
                             BorderThickness="0"
                             ItemContainerStyle="{StaticResource ListItemStyle}">
@@ -466,6 +625,9 @@
                                     Grid.Row="1"
                                     ItemsSource="{x:Bind ViewModel.SpotifyPreviewTracks, Mode=OneWay}"
                                     SelectedItem="{x:Bind ViewModel.SelectedSpotifyTrack, Mode=TwoWay}"
+                                    SelectionMode="Extended"
+                                    CanDragItems="True"
+                                    DragItemsStarting="SourceList_DragItemsStarting"
                                     DoubleTapped="SpotifyPreviewTracksList_DoubleTapped"
                                     Background="Transparent"
                                     BorderThickness="0"
@@ -475,13 +637,15 @@
                                             <Grid Padding="10,6" ColumnSpacing="10" BorderBrush="#17212A" BorderThickness="0,0,0,1">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="92" />
                                                     <ColumnDefinition Width="80" />
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel Spacing="1">
                                                     <TextBlock Text="{x:Bind Title}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                                                     <TextBlock Text="{x:Bind Artist}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" TextTrimming="CharacterEllipsis" />
                                                 </StackPanel>
-                                                <TextBlock Grid.Column="1" Text="{x:Bind DurationDisplay}" Foreground="{StaticResource MutedTextBrush}" FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="1" Text="{x:Bind MixDisplay}" Foreground="{StaticResource GreenBrush}" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Column="2" Text="{x:Bind DurationDisplay}" Foreground="{StaticResource MutedTextBrush}" FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center" />
                                             </Grid>
                                         </DataTemplate>
                                     </ListView.ItemTemplate>
@@ -501,6 +665,9 @@
                                     Grid.Row="1"
                                     ItemsSource="{x:Bind ViewModel.SpotifySearchResults, Mode=OneWay}"
                                     SelectedItem="{x:Bind ViewModel.SelectedSpotifySearchTrack, Mode=TwoWay}"
+                                    SelectionMode="Extended"
+                                    CanDragItems="True"
+                                    DragItemsStarting="SourceList_DragItemsStarting"
                                     DoubleTapped="SpotifySearchResultsList_DoubleTapped"
                                     Background="Transparent"
                                     BorderThickness="0"
@@ -510,13 +677,15 @@
                                             <Grid Padding="10,6" ColumnSpacing="10" BorderBrush="#17212A" BorderThickness="0,0,0,1">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="92" />
                                                     <ColumnDefinition Width="54" />
                                                 </Grid.ColumnDefinitions>
                                                 <StackPanel Spacing="1">
                                                     <TextBlock Text="{x:Bind Title}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                                                     <TextBlock Text="{x:Bind Artist}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" TextTrimming="CharacterEllipsis" />
                                                 </StackPanel>
-                                                <TextBlock Grid.Column="1" Text="{x:Bind PopularityDisplay}" Foreground="{StaticResource GreenBrush}" FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="1" Text="{x:Bind MixDisplay}" Foreground="{StaticResource GreenBrush}" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Column="2" Text="{x:Bind PopularityDisplay}" Foreground="{StaticResource MutedTextBrush}" FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center" />
                                             </Grid>
                                         </DataTemplate>
                                     </ListView.ItemTemplate>
@@ -555,6 +724,9 @@
                                 Grid.Row="1"
                                 ItemsSource="{x:Bind ViewModel.LocalMusicTracks, Mode=OneWay}"
                                 SelectedItem="{x:Bind ViewModel.SelectedLocalMusicTrack, Mode=TwoWay}"
+                                SelectionMode="Extended"
+                                CanDragItems="True"
+                                DragItemsStarting="SourceList_DragItemsStarting"
                                 DoubleTapped="LocalMusicList_DoubleTapped"
                                 Background="Transparent"
                                 BorderThickness="0"
@@ -582,73 +754,106 @@
                     </Border>
                 </Grid>
 
-                <Grid Grid.Column="2" RowSpacing="10" Visibility="Collapsed">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
+                <Border Grid.Column="2" Background="{StaticResource PanelBrush}" BorderBrush="#31404E" BorderThickness="1" CornerRadius="6" Padding="12">
+                    <Grid RowSpacing="10">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="104" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
 
-                    <Border Background="{StaticResource PanelBrush}" BorderBrush="#31404E" BorderThickness="1" CornerRadius="6" Padding="12">
-                        <Grid RowSpacing="8">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <TextBlock Text="REQUESTS" Foreground="{StaticResource PrimaryTextBrush}" Style="{StaticResource SectionTitleStyle}" />
-                            <ListView Grid.Row="1" ItemsSource="{x:Bind ViewModel.Requests, Mode=OneWay}" SelectionMode="None" Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource ListItemStyle}">
-                                <ListView.ItemTemplate>
-                                    <DataTemplate x:DataType="models:SongRequest">
-                                        <StackPanel Padding="6,5" BorderBrush="#17212A" BorderThickness="0,0,0,1" Spacing="1">
-                                            <TextBlock Text="{x:Bind Title}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Text="{x:Bind Artist}" Style="{StaticResource SmallMutedStyle}" TextTrimming="CharacterEllipsis" />
+                        <Grid>
+                            <TextBlock Text="SONG QUEUE" Foreground="{StaticResource PrimaryTextBrush}" Style="{StaticResource SectionTitleStyle}" />
+                            <TextBlock Text="{x:Bind ViewModel.ActiveDeckName, Mode=OneWay}" Foreground="{StaticResource YellowBrush}" FontSize="12" FontWeight="Bold" HorizontalAlignment="Right" />
+                        </Grid>
+
+                        <Grid Grid.Row="1" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button Click="AddSelectedSourceToDeckA_Click" Content="ADD A" Style="{StaticResource ChromeButtonStyle}" MinHeight="34" />
+                            <Button Grid.Column="1" Click="AddSelectedSourceToDeckB_Click" Content="ADD B" Style="{StaticResource ChromeButtonStyle}" MinHeight="34" />
+                        </Grid>
+
+                        <TextBlock Grid.Row="2" Text="MATCHING SONGS" Foreground="{StaticResource GreenBrush}" FontSize="12" FontWeight="Bold" />
+
+                        <ListView
+                            Grid.Row="3"
+                            ItemsSource="{x:Bind ViewModel.Recommendations}"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            ItemContainerStyle="{StaticResource ListItemStyle}">
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="models:SongRecommendation">
+                                    <Grid Padding="8,4" ColumnSpacing="8" BorderBrush="#17212A" BorderThickness="0,0,0,1">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="28" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="80" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{x:Bind Rank}" Foreground="{StaticResource GreenBrush}" FontSize="12" FontWeight="Bold" VerticalAlignment="Center" />
+                                        <StackPanel Grid.Column="1" Spacing="0">
+                                            <TextBlock Text="{x:Bind Title}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{x:Bind Artist}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
                                         </StackPanel>
-                                    </DataTemplate>
-                                </ListView.ItemTemplate>
-                            </ListView>
-                            <Button Grid.Row="2" Content="CLEAR LIST" Style="{StaticResource ChromeButtonStyle}" />
-                        </Grid>
-                    </Border>
+                                        <StackPanel Grid.Column="2" Spacing="0" VerticalAlignment="Center">
+                                            <TextBlock Text="{x:Bind MixDisplay}" Foreground="{StaticResource YellowBrush}" FontSize="10" HorizontalAlignment="Right" />
+                                            <TextBlock Text="{x:Bind MatchDisplay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="10" HorizontalAlignment="Right" />
+                                        </StackPanel>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
 
-                    <Border Grid.Row="1" Background="{StaticResource PanelBrush}" BorderBrush="#31404E" BorderThickness="1" CornerRadius="6" Padding="12">
-                        <Grid RowSpacing="8">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                            </Grid.RowDefinitions>
-                            <TextBlock Text="RECOMMENDED NEXT" Foreground="{StaticResource BlueBrush}" Style="{StaticResource SectionTitleStyle}" />
-                            <ListView Grid.Row="1" ItemsSource="{x:Bind ViewModel.Recommendations, Mode=OneWay}" SelectionMode="None" Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource ListItemStyle}">
-                                <ListView.ItemTemplate>
-                                    <DataTemplate x:DataType="models:SongRecommendation">
-                                        <Grid Padding="6,6" ColumnSpacing="8" BorderBrush="#17212A" BorderThickness="0,0,0,1">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="30" />
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="54" />
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock Text="{x:Bind Rank}" Foreground="{StaticResource BlueBrush}" FontWeight="Bold" VerticalAlignment="Center" />
-                                            <StackPanel Grid.Column="1" Spacing="1">
-                                                <TextBlock Text="{x:Bind Title}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Text="{x:Bind Artist}" Style="{StaticResource SmallMutedStyle}" TextTrimming="CharacterEllipsis" />
-                                            </StackPanel>
-                                            <TextBlock Grid.Column="2" Text="{x:Bind MatchPercent}" Foreground="{StaticResource GreenBrush}" FontWeight="Bold" HorizontalAlignment="Right" VerticalAlignment="Center" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ListView.ItemTemplate>
-                            </ListView>
-                        </Grid>
-                    </Border>
-                </Grid>
+                        <ListView
+                            x:Name="SongQueueList"
+                            Grid.Row="4"
+                            ItemsSource="{x:Bind ViewModel.ActiveDeckQueue, Mode=OneWay}"
+                            SelectedItem="{x:Bind ViewModel.SelectedActiveDeckQueueItem, Mode=TwoWay}"
+                            SelectionMode="Extended"
+                            CanDragItems="True"
+                            AllowDrop="True"
+                            CanReorderItems="True"
+                            DragItemsStarting="QueueList_DragItemsStarting"
+                            DragOver="QueueList_DragOver"
+                            Drop="SongQueueList_Drop"
+                            DoubleTapped="QueueList_DoubleTapped"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            ItemContainerStyle="{StaticResource ListItemStyle}">
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="spotify:DancePilotQueueItem">
+                                    <Grid Padding="8,6" ColumnSpacing="8" BorderBrush="#17212A" BorderThickness="0,0,0,1">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="30" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="88" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{x:Bind QueuePosition}" Foreground="{StaticResource YellowBrush}" FontWeight="Bold" VerticalAlignment="Center" />
+                                        <StackPanel Grid.Column="1" Spacing="1">
+                                            <TextBlock Text="{x:Bind Title}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{x:Bind Artist}" Foreground="{StaticResource MutedTextBrush}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="2" Text="{x:Bind MixDisplay}" Foreground="{StaticResource GreenBrush}" FontSize="11" HorizontalAlignment="Right" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+                </Border>
             </Grid>
 
             <Border Grid.Row="3" Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="6" Padding="14">
-                <Grid ColumnSpacing="18">
+                <Grid ColumnSpacing="12">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="2*" />
-                        <ColumnDefinition Width="1*" />
-                        <ColumnDefinition Width="370" />
-                        <ColumnDefinition Width="2*" />
-                        <ColumnDefinition Width="120" />
+                        <ColumnDefinition Width="1.25*" />
+                        <ColumnDefinition Width="0.9*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="1.7*" />
+                        <ColumnDefinition Width="260" />
                         <ColumnDefinition Width="140" />
                     </Grid.ColumnDefinitions>
 
@@ -666,9 +871,9 @@
 
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                         <Button Command="{x:Bind ViewModel.SkipPreviousSpotifyCommand}" Content="PREV" Style="{StaticResource ChromeButtonStyle}" MinWidth="58" MinHeight="56" />
-                        <Button Command="{x:Bind ViewModel.RewindPlaybackCommand}" Content="RR" Style="{StaticResource ChromeButtonStyle}" MinWidth="48" MinHeight="56" />
+                        <Button Command="{x:Bind ViewModel.RewindPlaybackCommand}" Content="-15" Style="{StaticResource ChromeButtonStyle}" MinWidth="48" MinHeight="56" />
                         <Button Command="{x:Bind ViewModel.TogglePlaybackCommand}" Content="{x:Bind ViewModel.PlayPauseLabel, Mode=OneWay}" Style="{StaticResource ChromeButtonStyle}" FontSize="18" FontWeight="Bold" MinWidth="92" MinHeight="72" />
-                        <Button Command="{x:Bind ViewModel.FastForwardPlaybackCommand}" Content="FF" Style="{StaticResource ChromeButtonStyle}" MinWidth="48" MinHeight="56" />
+                        <Button Command="{x:Bind ViewModel.FastForwardPlaybackCommand}" Content="+15" Style="{StaticResource ChromeButtonStyle}" MinWidth="48" MinHeight="56" />
                         <Button Command="{x:Bind ViewModel.SkipNextSpotifyCommand}" Content="NEXT" Style="{StaticResource ChromeButtonStyle}" MinWidth="58" MinHeight="56" />
                     </StackPanel>
 
@@ -677,10 +882,31 @@
                             <TextBlock Text="{x:Bind ViewModel.SpotifyProgressDisplay, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="13" />
                             <TextBlock Text="{x:Bind ViewModel.ActiveDeckName, Mode=OneWay}" Foreground="{StaticResource YellowBrush}" FontSize="13" FontWeight="Bold" HorizontalAlignment="Right" />
                         </Grid>
-                        <Slider Minimum="0" Maximum="600" Value="{x:Bind ViewModel.SeekPositionSeconds, Mode=TwoWay}" />
+                        <Slider
+                            x:Name="PlaybackPositionSlider"
+                            Minimum="0"
+                            Maximum="{x:Bind ViewModel.SeekPositionMaximumSeconds, Mode=OneWay}"
+                            StepFrequency="1"
+                            Value="{x:Bind ViewModel.SeekPositionSeconds, Mode=TwoWay}" />
                     </StackPanel>
 
-                    <Button Grid.Column="4" Command="{x:Bind ViewModel.SeekSpotifyCommand}" Content="SEEK" Style="{StaticResource ChromeButtonStyle}" MinHeight="56" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="4" Spacing="5" VerticalAlignment="Center">
+                        <Grid>
+                            <TextBlock Text="VOLUME" Foreground="{StaticResource BlueBrush}" FontSize="13" FontWeight="Bold" />
+                            <TextBlock Text="{x:Bind ViewModel.DefaultSpotifyVolumeDisplay, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                        </Grid>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Slider
+                                x:Name="VolumeSlider"
+                                Minimum="0"
+                                Maximum="100"
+                                StepFrequency="1"
+                                Value="{x:Bind ViewModel.DefaultSpotifyVolume, Mode=TwoWay}" />
+                        </Grid>
+                    </StackPanel>
                     <Button Grid.Column="5" Command="{x:Bind ViewModel.EmergencyStopCommand}" Content="EMERGENCY PAUSE" Style="{StaticResource DangerButtonStyle}" MinHeight="56" VerticalAlignment="Center" />
                 </Grid>
             </Border>
