@@ -34,7 +34,8 @@ public sealed class MainPageViewModel : ObservableObject
     private const string DefaultCurrentAlbumArtPath = "ms-appx:///Assets/AlbumDanceFloor.png";
     private const string DefaultNextAlbumArtPath = "ms-appx:///Assets/AlbumDanceFloor.png";
     private const string DefaultLocalAlbumArtPath = "ms-appx:///Assets/AlbumDanceFloor.png";
-    private const int DeckWaveformBarCount = 112;
+    private const int DeckWaveformBarCount = 240;
+    private const int TrackWaveformSliceCount = 1024;
     private const double DeckAnalyzerHalfHeight = 42;
     private const int FrequencyAnalyzerBandCount = 64;
     private const double LateTransitionSkipFadeSeconds = 1.0;
@@ -64,6 +65,7 @@ public sealed class MainPageViewModel : ObservableObject
     private readonly LocalAudioAnalysisService _localAudioAnalysisService;
     private readonly SystemAudioOutputAnalysisService _systemAudioOutputAnalysisService;
     private readonly AlbumArtCacheService _albumArtCacheService;
+    private readonly ExternalAlbumArtLookupService _externalAlbumArtLookupService;
     private readonly MediaPlayer _localMediaPlayer;
     private readonly Microsoft.UI.Dispatching.DispatcherQueue? _dispatcherQueue;
     private readonly DispatcherTimer _playbackTimer;
@@ -83,6 +85,9 @@ public sealed class MainPageViewModel : ObservableObject
     private readonly List<DancePilotQueueItem> _deckBQueue = [];
     private readonly List<DjWaveformFrame> _deckAWaveformHistory = [];
     private readonly List<DjWaveformFrame> _deckBWaveformHistory = [];
+    private readonly Dictionary<string, IReadOnlyList<TrackWaveformSlice>> _trackWaveformCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _realTrackWaveformKeys = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _trackWaveformAnalysisInFlight = new(StringComparer.OrdinalIgnoreCase);
     private int _nextDeckQueueItemId = 1;
     private bool _suppressSpotifyPlaylistAutoLoad;
     private string _spotifyClientId = string.Empty;
@@ -180,6 +185,7 @@ public sealed class MainPageViewModel : ObservableObject
         _localAudioAnalysisService = services.LocalAudioAnalysisService;
         _systemAudioOutputAnalysisService = services.SystemAudioOutputAnalysisService;
         _albumArtCacheService = services.AlbumArtCacheService;
+        _externalAlbumArtLookupService = services.ExternalAlbumArtLookupService;
         _localMediaPlayer = services.LocalMediaPlayer;
         _playbackCoordinator = services.PlaybackCoordinator;
         _dispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
@@ -1394,29 +1400,228 @@ public sealed class MainPageViewModel : ObservableObject
             AppendDjWaveformFrame(activeAnalyzerDeckName, snapshot);
         }
 
-        if (snapshot is not null && (IsDeckPlaying("Deck A") || (liveSnapshot is not null && activeAnalyzerDeckName == "Deck A")))
-        {
-            UpdateLiveDeckAnalyzer(CurrentWaveform, snapshot, "Deck A");
-        }
-        else
-        {
-            UpdateIdleAnalyzer(CurrentWaveform, deckASeed, "Deck A", deckADisplayItem is not null);
-        }
+        UpdateDeckWaveform(
+            CurrentWaveform,
+            deckADisplayItem,
+            "Deck A",
+            ResolveDeckPlaybackProgress("Deck A", deckADisplayItem),
+            IsDeckAudiblyPlaying("Deck A"),
+            activeAnalyzerDeckName == "Deck A" ? snapshot : null);
 
-        if (snapshot is not null && (IsDeckPlaying("Deck B") || (liveSnapshot is not null && activeAnalyzerDeckName == "Deck B")))
-        {
-            UpdateLiveDeckAnalyzer(NextWaveform, snapshot, "Deck B");
-        }
-        else
-        {
-            UpdateIdleAnalyzer(NextWaveform, deckBSeed, "Deck B", deckBDisplayItem is not null);
-        }
+        UpdateDeckWaveform(
+            NextWaveform,
+            deckBDisplayItem,
+            "Deck B",
+            ResolveDeckPlaybackProgress("Deck B", deckBDisplayItem),
+            IsDeckAudiblyPlaying("Deck B"),
+            activeAnalyzerDeckName == "Deck B" ? snapshot : null);
 
         UpdateFrequencyAnalyzer(snapshot, activeAnalyzerDeckName, deckASeed, deckBSeed);
     }
 
     private LocalAudioSpectrumSnapshot? TryAnalyzeSystemOutput() =>
         _systemAudioOutputAnalysisService.Analyze(waveformBarCount: DeckWaveformBarCount);
+
+    private void UpdateDeckWaveform(
+        ObservableCollection<WaveBar> bars,
+        DancePilotQueueItem? displayItem,
+        string deckName,
+        double progress,
+        bool active,
+        LocalAudioSpectrumSnapshot? liveSnapshot)
+    {
+        const int visibleCount = DeckWaveformBarCount;
+        var sourceWaveform = ResolveDisplayTrackWaveform(displayItem);
+        var centerIndex = visibleCount / 2;
+        var sourceCenter = Convert.ToInt32(Math.Round(Math.Clamp(progress, 0, 1) * Math.Max(0, sourceWaveform.Count - 1)));
+        var queued = displayItem is not null;
+
+        bars.Clear();
+        for (var index = 0; index < visibleCount; index++)
+        {
+            var sourceIndex = sourceCenter + index - centerIndex;
+            var slice = ReadTrackWaveformSlice(sourceWaveform, sourceIndex, queued);
+            var centerDistance = Math.Abs(index - centerIndex) / 12d;
+            var liveLift = liveSnapshot is null
+                ? 0
+                : Math.Max(0, 1 - centerDistance) * ReadLevel(liveSnapshot.Waveform, index, visibleCount) * 0.20;
+            bars.Add(CreateDeckWaveBar(deckName, slice, index, visibleCount, active, queued, liveLift));
+        }
+    }
+
+    private IReadOnlyList<TrackWaveformSlice> ResolveDisplayTrackWaveform(DancePilotQueueItem? displayItem)
+    {
+        if (displayItem is null)
+        {
+            return CreateGeneratedTrackWaveform(null);
+        }
+
+        var cacheKey = CreateTrackWaveformCacheKey(displayItem);
+        if (_trackWaveformCache.TryGetValue(cacheKey, out var cached))
+        {
+            EnsureTrackWaveformAnalysis(displayItem, cacheKey);
+            return cached;
+        }
+
+        var generated = CreateGeneratedTrackWaveform(displayItem);
+        _trackWaveformCache[cacheKey] = generated;
+        EnsureTrackWaveformAnalysis(displayItem, cacheKey);
+        return generated;
+    }
+
+    private void EnsureTrackWaveformAnalysis(DancePilotQueueItem displayItem, string cacheKey)
+    {
+        if (displayItem.Source != SongSources.Local
+            || string.IsNullOrWhiteSpace(displayItem.ExternalUri)
+            || !File.Exists(displayItem.ExternalUri)
+            || _realTrackWaveformKeys.Contains(cacheKey)
+            || !_trackWaveformAnalysisInFlight.Add(cacheKey))
+        {
+            return;
+        }
+
+        DispatchAsync(async () =>
+        {
+            try
+            {
+                var slices = await _localAudioAnalysisService.GetOrCreateTrackWaveformAsync(
+                    displayItem.ExternalUri,
+                    TrackWaveformSliceCount);
+                if (slices.Count == 0)
+                {
+                    return;
+                }
+
+                _trackWaveformCache[cacheKey] = slices;
+                _realTrackWaveformKeys.Add(cacheKey);
+                if (IsDeckDisplayItem(displayItem.DeckName, displayItem.Id))
+                {
+                    UpdateDeckAnalyzers();
+                }
+            }
+            finally
+            {
+                _trackWaveformAnalysisInFlight.Remove(cacheKey);
+            }
+        });
+    }
+
+    private double ResolveDeckPlaybackProgress(string deckName, DancePilotQueueItem? displayItem)
+    {
+        if (displayItem is null)
+        {
+            return 0;
+        }
+
+        var loadedItem = ResolveLoadedDeckItem(deckName);
+        if (loadedItem?.Id != displayItem.Id)
+        {
+            return 0;
+        }
+
+        if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
+        {
+            var duration = _localMediaPlayer.PlaybackSession.NaturalDuration > TimeSpan.Zero
+                ? _localMediaPlayer.PlaybackSession.NaturalDuration
+                : SelectedLocalMusicTrack?.Duration;
+            if (duration is not TimeSpan durationValue || durationValue <= TimeSpan.Zero)
+            {
+                return 0;
+            }
+
+            return Math.Clamp(_localMediaPlayer.PlaybackSession.Position.TotalSeconds / durationValue.TotalSeconds, 0, 1);
+        }
+
+        if (SeekPositionMaximumSeconds <= 1)
+        {
+            return 0;
+        }
+
+        return Math.Clamp(SeekPositionSeconds / SeekPositionMaximumSeconds, 0, 1);
+    }
+
+    private static TrackWaveformSlice ReadTrackWaveformSlice(
+        IReadOnlyList<TrackWaveformSlice> waveform,
+        int index,
+        bool queued)
+    {
+        if (waveform.Count == 0 || index < 0 || index >= waveform.Count)
+        {
+            var floor = queued ? 0.035 : 0.012;
+            return new TrackWaveformSlice(floor, floor, floor, floor, floor);
+        }
+
+        return waveform[index];
+    }
+
+    private static string CreateTrackWaveformCacheKey(DancePilotQueueItem item) =>
+        $"{item.Source}|{item.ExternalUri}|{item.Title}|{item.Artist}".ToLowerInvariant();
+
+    private static IReadOnlyList<TrackWaveformSlice> CreateGeneratedTrackWaveform(DancePilotQueueItem? item)
+    {
+        var seedText = item is null
+            ? "empty"
+            : $"{item.Source}|{item.ExternalUri}|{item.Title}|{item.Artist}|{item.BPM}|{item.MusicalKey}";
+        var seed = CreateDeterministicSeed(seedText);
+        var slices = new TrackWaveformSlice[TrackWaveformSliceCount];
+        var empty = item is null;
+
+        var breakPosition = 0.42 + ((seed >> 8) % 22) / 100d;
+        var buildPosition = Math.Min(0.78, breakPosition + 0.10 + ((seed >> 16) % 14) / 100d);
+        var bassPhase = (seed & 0xFF) / 255d * Math.PI * 2;
+        var midPhase = ((seed >> 8) & 0xFF) / 255d * Math.PI * 2;
+        var highPhase = ((seed >> 16) & 0xFF) / 255d * Math.PI * 2;
+
+        for (var index = 0; index < slices.Length; index++)
+        {
+            var position = index / Math.Max(1d, slices.Length - 1d);
+            var intro = SmoothStep(0.02, 0.16, position);
+            var outro = 1 - SmoothStep(0.84, 0.99, position);
+            var body = Math.Clamp(intro * outro, 0, 1);
+            var breakDip = 1 - (0.42 * Bell(position, breakPosition, 0.050));
+            var buildLift = 0.18 * Bell(position, buildPosition, 0.085);
+            var phrase = 0.78
+                + Math.Sin((position * Math.PI * 8.0) + bassPhase) * 0.10
+                + Math.Sin((position * Math.PI * 19.0) + midPhase) * 0.055
+                + Math.Sin((position * Math.PI * 43.0) + highPhase) * 0.025;
+            var total = empty
+                ? 0.025
+                : Math.Clamp((0.10 + body * (0.62 * breakDip + buildLift)) * phrase, 0.035, 0.95);
+            var low = empty
+                ? 0.020
+                : Math.Clamp(total * (0.70 + Math.Sin(position * Math.PI * 12.0 + bassPhase) * 0.22), 0.025, 1);
+            var mid = empty
+                ? 0.018
+                : Math.Clamp(total * (0.78 + Math.Sin(position * Math.PI * 22.0 + midPhase) * 0.17), 0.025, 1);
+            var high = empty
+                ? 0.016
+                : Math.Clamp(total * (0.52 + Math.Sin(position * Math.PI * 56.0 + highPhase) * 0.24), 0.018, 1);
+            var transient = empty
+                ? 0.015
+                : Math.Clamp(total + Bell(position, buildPosition, 0.025) * 0.20 + Math.Sin(position * Math.PI * 96.0 + highPhase) * 0.035, 0.02, 1);
+            slices[index] = new TrackWaveformSlice(low, mid, high, transient, total);
+        }
+
+        return slices;
+    }
+
+    private static int CreateDeterministicSeed(string value)
+    {
+        var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value));
+        return BitConverter.ToInt32(bytes, 0) & int.MaxValue;
+    }
+
+    private static double SmoothStep(double edge0, double edge1, double value)
+    {
+        var t = Math.Clamp((value - edge0) / Math.Max(0.000001, edge1 - edge0), 0, 1);
+        return t * t * (3 - 2 * t);
+    }
+
+    private static double Bell(double value, double center, double width)
+    {
+        var distance = (value - center) / Math.Max(0.000001, width);
+        return Math.Exp(-distance * distance * 0.5);
+    }
 
     private void AppendDjWaveformFrame(string deckName, LocalAudioSpectrumSnapshot snapshot)
     {
@@ -1558,6 +1763,66 @@ public sealed class MainPageViewModel : ObservableObject
             PeakHeight = peakHeight,
             PeakFill = peakFill
         };
+    }
+
+    private static WaveBar CreateDeckWaveBar(
+        string deckName,
+        TrackWaveformSlice slice,
+        int index,
+        int count,
+        bool active,
+        bool queued,
+        double liveLift)
+    {
+        var position = index / Math.Max(1d, count - 1d);
+        var totalEnergy = Math.Clamp((slice.TotalEnergy * 0.66) + (slice.PeakEnergy * 0.20) + liveLift, queued ? 0.018 : 0.008, 1);
+        var upperShape = 0.82 + Math.Sin(position * Math.PI * 18.0) * 0.08 + slice.HighEnergy * 0.06;
+        var lowerShape = 0.70 + Math.Cos(position * Math.PI * 13.0) * 0.08 + slice.LowEnergy * 0.10;
+        var floor = queued ? 1.4 : 0.7;
+        var upperHeight = Math.Clamp(DeckAnalyzerHalfHeight * totalEnergy * upperShape, floor, DeckAnalyzerHalfHeight);
+        var lowerHeight = Math.Clamp(DeckAnalyzerHalfHeight * totalEnergy * lowerShape, floor, DeckAnalyzerHalfHeight);
+        var peakHeight = Math.Clamp(Math.Max(upperHeight, lowerHeight) + slice.PeakEnergy * (active ? 5.0 : 2.8), floor, DeckAnalyzerHalfHeight);
+        var fill = DjWaveformSliceBrush(deckName, slice, active, queued);
+        var lowerFill = Brush(ScaleBrightness(fill.Color, active ? 0.82 : 0.70));
+        var peakFill = DeckAnalyzerPeakBrush(deckName, slice.PeakEnergy, active, queued);
+
+        return new WaveBar(Math.Max(upperHeight, lowerHeight), fill)
+        {
+            UpperHeight = upperHeight,
+            LowerHeight = lowerHeight,
+            UpperFill = fill,
+            LowerFill = lowerFill,
+            PeakHeight = peakHeight,
+            PeakFill = peakFill
+        };
+    }
+
+    private static SolidColorBrush DjWaveformSliceBrush(
+        string deckName,
+        TrackWaveformSlice slice,
+        bool active,
+        bool queued)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        var deckAccent = normalizedDeckName == "Deck B"
+            ? ParseColor("#1EA7FF")
+            : ParseColor("#F4B400");
+        var lowColor = normalizedDeckName == "Deck B" ? ParseColor("#4CB8FF") : ParseColor("#F4B400");
+        var midColor = ParseColor("#2FD889");
+        var highColor = ParseColor("#8EE6FF");
+        var low = Math.Clamp(slice.LowEnergy, 0, 1);
+        var mid = Math.Clamp(slice.MidEnergy, 0, 1);
+        var high = Math.Clamp(slice.HighEnergy, 0, 1);
+        var total = Math.Max(0.001, low + mid + high);
+        var r = (lowColor.R * low + midColor.R * mid + highColor.R * high) / total;
+        var g = (lowColor.G * low + midColor.G * mid + highColor.G * high) / total;
+        var b = (lowColor.B * low + midColor.B * mid + highColor.B * high) / total;
+        var color = ColorHelper.FromArgb(255, Convert.ToByte(r), Convert.ToByte(g), Convert.ToByte(b));
+        color = Blend(color, deckAccent, queued ? 0.16 : 0.34);
+        var brightness = active
+            ? 0.70 + slice.TotalEnergy * 0.52
+            : queued ? 0.42 + slice.TotalEnergy * 0.40 : 0.20;
+        return Brush(ScaleBrightness(color, Math.Clamp(brightness, 0.18, 1.25)));
     }
 
     private static SolidColorBrush DeckAnalyzerBrush(string deckName, double band, double level, bool active, bool queued)
@@ -2017,6 +2282,7 @@ public sealed class MainPageViewModel : ObservableObject
         }
 
         _isRestoringSessionState = true;
+        var restored = false;
         try
         {
             SpotifySearchQuery = state.SpotifySearchQuery;
@@ -2095,6 +2361,7 @@ public sealed class MainPageViewModel : ObservableObject
             SpotifyOperationMessage = state.SavedAt == default
                 ? "Restored your last DancePilot session."
                 : $"Restored your last DancePilot session from {state.SavedAt:g}.";
+            restored = true;
             StartupLog.Write($"Session restored: deckA={_deckAQueue.Count}; deckB={_deckBQueue.Count}; preview={SpotifyPreviewTracks.Count}; search={SpotifySearchResults.Count}");
         }
         catch (Exception ex)
@@ -2106,6 +2373,10 @@ public sealed class MainPageViewModel : ObservableObject
         {
             _isRestoringSessionState = false;
             _hasLoadedSessionState = true;
+            if (restored)
+            {
+                CacheDeckAlbumArtForCurrentQueues();
+            }
         }
     }
 
@@ -2741,8 +3012,16 @@ public sealed class MainPageViewModel : ObservableObject
 
     private async Task SkipNextSpotifyAsync()
     {
+        var hadLoadedDeckItem = _playingDeckQueueItemId is not null;
         if (await TryPlayNextDeckQueueItemAsync())
         {
+            return;
+        }
+
+        if (hadLoadedDeckItem)
+        {
+            var targetDeckName = ResolveTransitionDeckName();
+            SpotifyOperationMessage = $"No next queued song on {targetDeckName} for {SelectedTransitionMode}.";
             return;
         }
 
@@ -3557,7 +3836,12 @@ public sealed class MainPageViewModel : ObservableObject
 
     private async Task<bool> TryPlayNextDeckQueueItemAsync()
     {
-        var deckName = NormalizeDeckName(_playingDeckQueueItemId is null ? ActiveDeckName : _playingDeckName);
+        if (_playingDeckQueueItemId is not null)
+        {
+            return await TryStartTransitionTargetAsync(skipFadeOut: !IsPlaybackPlaying);
+        }
+
+        var deckName = NormalizeDeckName(ActiveDeckName);
         var sourceDeckName = _playingDeckName;
         var sourceItemId = _playingDeckQueueItemId;
         var sourcePlaybackMode = SelectedPlaybackMode;
@@ -4019,9 +4303,14 @@ public sealed class MainPageViewModel : ObservableObject
         deckName == "Deck B" ? _deckBQueue : _deckAQueue;
 
     private bool IsDeckPlaying(string deckName) =>
+        IsDeckAudiblyPlaying(deckName);
+
+    private bool IsDeckLoaded(string deckName) =>
         string.Equals(_playingDeckName, NormalizeDeckName(deckName), StringComparison.Ordinal)
-        && IsPlaybackPlaying
         && _playingDeckQueueItemId is not null;
+
+    private bool IsDeckAudiblyPlaying(string deckName) =>
+        IsDeckLoaded(deckName) && IsPlaybackPlaying;
 
     private DancePilotQueueItem? ResolveNextDeckDisplayItem(string deckName)
     {
@@ -4042,20 +4331,24 @@ public sealed class MainPageViewModel : ObservableObject
     }
 
     private DancePilotQueueItem? ResolveDeckDisplayItem(string deckName) =>
-        ResolvePlayingDeckItem(deckName) ?? ResolveNextDeckDisplayItem(deckName);
+        ResolveLoadedDeckItem(deckName) ?? ResolveNextDeckDisplayItem(deckName);
 
     private DancePilotQueueItem? ResolvePlayingDeckItem(string deckName) =>
-        IsDeckPlaying(deckName)
+        ResolveLoadedDeckItem(deckName);
+
+    private DancePilotQueueItem? ResolveLoadedDeckItem(string deckName) =>
+        IsDeckLoaded(deckName)
             ? QueueForDeck(NormalizeDeckName(deckName)).FirstOrDefault(item => item.Id == _playingDeckQueueItemId)
             : null;
 
     private string ResolveDeckStatus(string deckName)
     {
-        if (IsDeckPlaying(deckName))
+        if (IsDeckLoaded(deckName))
         {
+            var state = IsDeckAudiblyPlaying(deckName) ? "Playing" : "Paused";
             return string.Equals(ActiveDeckName, deckName, StringComparison.Ordinal)
-                ? "Playing / Selected"
-                : "Playing";
+                ? $"{state} / Selected"
+                : state;
         }
 
         if (string.Equals(ActiveDeckName, deckName, StringComparison.Ordinal))
@@ -4069,68 +4362,54 @@ public sealed class MainPageViewModel : ObservableObject
 
     private string ResolveDeckTitle(string deckName)
     {
-        if (IsDeckPlaying(deckName))
-        {
-            return ResolvePlayingDeckItem(deckName)?.Title ?? SpotifyNowPlayingTitle;
-        }
-
-        return ResolveNextDeckDisplayItem(deckName)?.Title ?? "No song queued";
+        return ResolveDeckDisplayItem(deckName)?.Title ?? "No song queued";
     }
 
     private string ResolveDeckArtist(string deckName)
     {
-        if (IsDeckPlaying(deckName))
-        {
-            return ResolvePlayingDeckItem(deckName)?.Artist ?? SpotifyNowPlayingArtist;
-        }
-
-        return ResolveNextDeckDisplayItem(deckName)?.Artist ?? "Drag songs or playlists here";
+        return ResolveDeckDisplayItem(deckName)?.Artist ?? "Drag songs or playlists here";
     }
 
     private string ResolveDeckDetail(string deckName)
     {
-        if (IsDeckPlaying(deckName))
+        var item = ResolveDeckDisplayItem(deckName);
+        if (item is null)
         {
-            var playingItem = ResolvePlayingDeckItem(deckName);
-            return !string.IsNullOrWhiteSpace(playingItem?.MixDisplay)
-                ? $"{playingItem.MixDisplay} | {SpotifyProgressDisplay}"
+            return "Queue is empty";
+        }
+
+        if (ResolveLoadedDeckItem(deckName)?.Id == item.Id)
+        {
+            return !string.IsNullOrWhiteSpace(item.MixDisplay)
+                ? $"{item.MixDisplay} | {SpotifyProgressDisplay}"
                 : SpotifyProgressDisplay;
         }
 
-        var item = ResolveNextDeckDisplayItem(deckName);
-        return item is null
-            ? "Queue is empty"
-            : item.MixDisplay;
+        return item.MixDisplay;
     }
 
     private string? ResolveDeckAlbumArtSource(string deckName)
     {
-        var playingItem = ResolvePlayingDeckItem(deckName);
-        if (playingItem is not null)
+        var displayItem = ResolveDeckDisplayItem(deckName);
+        if (displayItem is null)
         {
-            var playingArtSource = ResolveQueueItemAlbumArtSource(playingItem);
-            if (HasUsableAlbumArtSource(playingArtSource))
-            {
-                return playingArtSource;
-            }
-
-            if (playingItem.Source == SongSources.Spotify
-                && PlaybackStateMatchesQueueItem(playingItem)
-                && !string.IsNullOrWhiteSpace(_currentPlaybackAlbumArtUrl))
-            {
-                return _currentPlaybackAlbumArtUrl;
-            }
-
-            return playingArtSource;
+            return null;
         }
 
-        if (IsDeckPlaying(deckName) && !string.IsNullOrWhiteSpace(_currentPlaybackAlbumArtUrl))
+        var itemArtSource = ResolveQueueItemAlbumArtSource(displayItem);
+        if (HasUsableAlbumArtSource(itemArtSource))
+        {
+            return itemArtSource;
+        }
+
+        if (displayItem.Source == SongSources.Spotify
+            && PlaybackStateMatchesQueueItem(displayItem)
+            && !string.IsNullOrWhiteSpace(_currentPlaybackAlbumArtUrl))
         {
             return _currentPlaybackAlbumArtUrl;
         }
 
-        var displayItem = ResolveNextDeckDisplayItem(deckName);
-        return displayItem is null ? null : ResolveQueueItemAlbumArtSource(displayItem);
+        return itemArtSource;
     }
 
     private string? ResolveQueueItemAlbumArtSource(DancePilotQueueItem item)
@@ -4387,35 +4666,9 @@ public sealed class MainPageViewModel : ObservableObject
             ? DefaultLocalAlbumArtPath
             : track.AlbumArtUrl.Trim();
 
-    private async Task<DancePilotQueueItem> ResolveLocalQueueItemAlbumArtAsync(DancePilotQueueItem queueItem)
-    {
-        try
-        {
-            var cachedAlbumArtUri = await _albumArtCacheService.CacheAlbumArtAsync(queueItem);
-            return string.IsNullOrWhiteSpace(cachedAlbumArtUri)
-                ? queueItem
-                : queueItem with { AlbumArtUrl = cachedAlbumArtUri };
-        }
-        catch (Exception ex)
-        {
-            StartupLog.Write($"Local album art could not be cached for {queueItem.Title}: {ex.Message}");
-            return queueItem;
-        }
-    }
-
     private async Task<DancePilotQueueItem> ResolveDisplayQueueItemAlbumArtAsync(DancePilotQueueItem queueItem)
     {
-        if (queueItem.Source == SongSources.Local)
-        {
-            return await ResolveLocalQueueItemAlbumArtAsync(queueItem);
-        }
-
-        if (queueItem.Source != SongSources.Spotify)
-        {
-            return queueItem;
-        }
-
-        var resolvedItem = await ResolveSpotifyQueueItemAlbumArtAsync(queueItem);
+        var resolvedItem = await ResolveQueueItemAlbumArtAsync(queueItem);
         if (!HasUsableAlbumArtSource(resolvedItem.AlbumArtUrl))
         {
             return resolvedItem;
@@ -4430,7 +4683,7 @@ public sealed class MainPageViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            StartupLog.Write($"Spotify album art could not be cached for {queueItem.Title}: {ex.Message}");
+            StartupLog.Write($"Album art could not be cached for {queueItem.Title}: {ex.Message}");
             return resolvedItem;
         }
     }
@@ -4756,9 +5009,7 @@ public sealed class MainPageViewModel : ObservableObject
             return false;
         }
 
-        var playingItem = IsDeckPlaying(normalizedDeckName)
-            ? queue.FirstOrDefault(item => item.Id == _playingDeckQueueItemId)
-            : null;
+        var playingItem = ResolveLoadedDeckItem(normalizedDeckName);
         var shuffledItems = Shuffle(queue.Where(item => playingItem is null || item.Id != playingItem.Id));
         if (shuffledItems.Count < 2)
         {
@@ -4793,9 +5044,7 @@ public sealed class MainPageViewModel : ObservableObject
     {
         var normalizedDeckName = NormalizeDeckName(deckName);
         var queue = QueueForDeck(normalizedDeckName);
-        var playingItem = IsDeckPlaying(normalizedDeckName)
-            ? queue.FirstOrDefault(item => item.Id == _playingDeckQueueItemId)
-            : null;
+        var playingItem = ResolveLoadedDeckItem(normalizedDeckName);
 
         queue.Clear();
         if (playingItem is not null)
@@ -4877,7 +5126,7 @@ public sealed class MainPageViewModel : ObservableObject
         }
 
         var item = queue[queueIndex];
-        item = await ResolveSpotifyQueueItemAlbumArtAsync(item);
+        item = await ResolveQueueItemAlbumArtAsync(item);
         queueIndex = queue.FindIndex(existing => existing.Id == itemId);
         if (queueIndex < 0)
         {
@@ -4911,6 +5160,39 @@ public sealed class MainPageViewModel : ObservableObject
         QueueSessionStateSave();
     }
 
+    private async Task<DancePilotQueueItem> ResolveQueueItemAlbumArtAsync(DancePilotQueueItem item)
+    {
+        if (HasUsableAlbumArtSource(item.AlbumArtUrl))
+        {
+            return item;
+        }
+
+        if (item.Source == SongSources.Spotify)
+        {
+            var spotifyItem = await ResolveSpotifyQueueItemAlbumArtAsync(item);
+            if (HasUsableAlbumArtSource(spotifyItem.AlbumArtUrl))
+            {
+                return spotifyItem;
+            }
+
+            return await ResolveExternalQueueItemAlbumArtAsync(spotifyItem);
+        }
+
+        if (item.Source == SongSources.Local)
+        {
+            var localTrack = _allLocalMusicTracks.FirstOrDefault(track =>
+                string.Equals(track.FilePath, item.ExternalUri, StringComparison.OrdinalIgnoreCase));
+            if (HasUsableAlbumArtSource(localTrack?.AlbumArtUrl))
+            {
+                return item with { AlbumArtUrl = localTrack!.AlbumArtUrl };
+            }
+
+            return await ResolveExternalQueueItemAlbumArtAsync(item);
+        }
+
+        return await ResolveExternalQueueItemAlbumArtAsync(item);
+    }
+
     private async Task<DancePilotQueueItem> ResolveSpotifyQueueItemAlbumArtAsync(DancePilotQueueItem item)
     {
         if (item.Source != SongSources.Spotify || HasUsableAlbumArtSource(item.AlbumArtUrl))
@@ -4925,6 +5207,12 @@ public sealed class MainPageViewModel : ObservableObject
         }
 
         var trackId = ExtractSpotifyTrackId(item.ExternalUri);
+        var importedTrack = await FindImportedSpotifyTrackByUriAsync(item.ExternalUri, trackId);
+        if (HasUsableAlbumArtSource(importedTrack?.AlbumArtUrl))
+        {
+            return item with { AlbumArtUrl = importedTrack!.AlbumArtUrl };
+        }
+
         if (string.IsNullOrWhiteSpace(trackId))
         {
             return item;
@@ -4934,17 +5222,50 @@ public sealed class MainPageViewModel : ObservableObject
         {
             if (!await _spotifyService.IsConnectedAsync())
             {
-                return item;
+                StartupLog.Write($"Spotify album art API lookup skipped for {item.Title}: not connected");
             }
-
-            var spotifyTrack = await _spotifyService.GetTrackAsync(CurrentSpotifySettings, trackId);
-            return HasUsableAlbumArtSource(spotifyTrack.AlbumArtUrl)
-                ? item with { AlbumArtUrl = spotifyTrack.AlbumArtUrl }
-                : item;
+            else
+            {
+                var spotifyTrack = await _spotifyService.GetTrackAsync(CurrentSpotifySettings, trackId);
+                if (HasUsableAlbumArtSource(spotifyTrack.AlbumArtUrl))
+                {
+                    return item with { AlbumArtUrl = spotifyTrack.AlbumArtUrl };
+                }
+            }
         }
         catch (Exception ex)
         {
             StartupLog.Write($"Spotify album art lookup skipped for {item.Title}: {ex.Message}");
+        }
+
+        return item;
+    }
+
+    private async Task<SpotifyTrackMetadata?> FindImportedSpotifyTrackByUriAsync(string spotifyUri, string spotifyTrackId)
+    {
+        try
+        {
+            return await _spotifyLibraryRepository.GetImportedTrackByUriAsync(spotifyUri, spotifyTrackId);
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write($"Imported Spotify album art lookup skipped for {spotifyUri}: {ex.Message}");
+            return null;
+        }
+    }
+
+    private async Task<DancePilotQueueItem> ResolveExternalQueueItemAlbumArtAsync(DancePilotQueueItem item)
+    {
+        try
+        {
+            var albumArtUrl = await _externalAlbumArtLookupService.FindAlbumArtAsync(item.Title, item.Artist);
+            return HasUsableAlbumArtSource(albumArtUrl)
+                ? item with { AlbumArtUrl = albumArtUrl }
+                : item;
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write($"External album art lookup skipped for {item.Title}: {ex.Message}");
             return item;
         }
     }
@@ -5386,7 +5707,11 @@ public sealed class MainPageViewModel : ObservableObject
             SpotifyNowPlayingArtist = "Open Spotify on a device, then refresh devices.";
             SpotifyTimeRemaining = "--:--";
             SpotifyProgressDisplay = "--:-- / --:--";
-            _currentPlaybackAlbumArtUrl = null;
+            if (ResolveLoadedDeckItem(_playingDeckName) is null)
+            {
+                _currentPlaybackAlbumArtUrl = null;
+            }
+
             RefreshDeckDisplayProperties();
             CurrentOutputStatus = "No active Spotify playback device.";
             ResetSeekPositionRange();
@@ -5397,7 +5722,12 @@ public sealed class MainPageViewModel : ObservableObject
         IsPlaybackPlaying = state.IsPlaying;
         SpotifyNowPlayingTitle = state.TrackTitle;
         SpotifyNowPlayingArtist = state.TrackArtist;
-        _currentPlaybackAlbumArtUrl = state.Track?.AlbumArtUrl;
+        if (!string.IsNullOrWhiteSpace(state.Track?.AlbumArtUrl))
+        {
+            _currentPlaybackAlbumArtUrl = state.Track.AlbumArtUrl;
+            ApplyPlaybackAlbumArtToLoadedQueueItem(state.Track);
+        }
+
         RefreshDeckDisplayProperties();
         SpotifyTimeRemaining = state.TimeRemainingDisplay;
         SpotifyProgressDisplay = state.ProgressDisplay;
@@ -5433,6 +5763,55 @@ public sealed class MainPageViewModel : ObservableObject
             CurrentSpotifyPlaylistName = ImportedSpotifyPlaylists.FirstOrDefault(playlist => playlist.SpotifyPlaylistId == playlistId)?.Name
                 ?? state.ContextUri;
         }
+    }
+
+    private void ApplyPlaybackAlbumArtToLoadedQueueItem(SpotifyTrackMetadata track)
+    {
+        if (!HasUsableAlbumArtSource(track.AlbumArtUrl)
+            || _playingDeckQueueItemId is null)
+        {
+            return;
+        }
+
+        var normalizedDeckName = NormalizeDeckName(_playingDeckName);
+        var queue = QueueForDeck(normalizedDeckName);
+        var queueIndex = queue.FindIndex(item => item.Id == _playingDeckQueueItemId);
+        if (queueIndex < 0)
+        {
+            return;
+        }
+
+        var item = queue[queueIndex];
+        if (item.Source != SongSources.Spotify
+            || !PlaybackTrackMatchesQueueItem(track, item)
+            || string.Equals(item.AlbumArtUrl, track.AlbumArtUrl, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        queue[queueIndex] = item with { AlbumArtUrl = track.AlbumArtUrl };
+        RefreshActiveDeckQueue();
+        QueueSessionStateSave();
+    }
+
+    private static bool PlaybackTrackMatchesQueueItem(SpotifyTrackMetadata track, DancePilotQueueItem item)
+    {
+        if (!string.IsNullOrWhiteSpace(track.SpotifyUri)
+            && string.Equals(track.SpotifyUri, item.ExternalUri, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var trackId = ExtractSpotifyTrackId(item.ExternalUri);
+        if (!string.IsNullOrWhiteSpace(trackId)
+            && string.Equals(trackId, track.SpotifyTrackId, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return string.Equals(track.Title, item.Title, StringComparison.OrdinalIgnoreCase)
+            && (string.IsNullOrWhiteSpace(item.Artist)
+                || string.Equals(track.Artist, item.Artist, StringComparison.OrdinalIgnoreCase));
     }
 
     private void ResetSeekPositionRange()

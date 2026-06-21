@@ -89,6 +89,11 @@ public sealed class SpotifyImportRepositoryTests
             Assert.Equal(128, importedTrack.BPM);
             Assert.Equal("A", importedTrack.MusicalKey);
             Assert.Equal("https://image.example/sweet-caroline.jpg", importedTrack.AlbumArtUrl);
+
+            var trackByUri = await libraryRepository.GetImportedTrackByUriAsync("spotify:track:track-456", "track-456");
+            Assert.NotNull(trackByUri);
+            Assert.Equal("Sweet Caroline", trackByUri.Title);
+            Assert.Equal("https://image.example/sweet-caroline.jpg", trackByUri.AlbumArtUrl);
         }
         finally
         {

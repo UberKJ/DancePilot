@@ -40,6 +40,8 @@ internal sealed class AppServices
 
     public required AlbumArtCacheService AlbumArtCacheService { get; init; }
 
+    public required ExternalAlbumArtLookupService ExternalAlbumArtLookupService { get; init; }
+
     public required MediaPlayer LocalMediaPlayer { get; init; }
 
     public required SqliteConnectionFactory ConnectionFactory { get; init; }

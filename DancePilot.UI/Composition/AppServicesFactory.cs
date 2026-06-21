@@ -57,6 +57,7 @@ internal static class AppServicesFactory
                 new AlbumArtCacheRepository(connectionFactory),
                 httpClient,
                 albumArtCacheFolder),
+            ExternalAlbumArtLookupService = new ExternalAlbumArtLookupService(httpClient),
             LocalMediaPlayer = new MediaPlayer(),
             ConnectionFactory = connectionFactory
         };

@@ -1,5 +1,7 @@
 using NAudio.Dsp;
 using NAudio.Wave;
+using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace DancePilot.Services.LocalMusic;
 
@@ -8,6 +10,7 @@ public sealed class LocalAudioAnalysisService : IDisposable
     private const int FftSize = 2048;
     private const int FftExponent = 11;
     private const int AnalysisFrameCount = 8192;
+    private const int TrackWaveformWindowFrameCount = 4096;
     private static readonly SpectrumBandDefinition[] BandDefinitions =
     [
         new("SUB", "30-60", 30, 60),
@@ -77,6 +80,41 @@ public sealed class LocalAudioAnalysisService : IDisposable
                 return null;
             }
         }
+    }
+
+    public Task<IReadOnlyList<TrackWaveformSlice>> GetOrCreateTrackWaveformAsync(
+        string filePath,
+        int sliceCount = 1024,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(filePath)
+            || !File.Exists(filePath)
+            || sliceCount <= 0)
+        {
+            return Task.FromResult<IReadOnlyList<TrackWaveformSlice>>([]);
+        }
+
+        return Task.Run<IReadOnlyList<TrackWaveformSlice>>(async () =>
+        {
+            var fileInfo = new FileInfo(filePath);
+            var cacheFolder = WaveformCacheFolder();
+            Directory.CreateDirectory(cacheFolder);
+
+            var cachePath = Path.Combine(cacheFolder, $"{CreateWaveformCacheKey(fileInfo, sliceCount)}.json");
+            var cached = await ReadCachedWaveformAsync(cachePath, cancellationToken);
+            if (cached.Count > 0)
+            {
+                return cached;
+            }
+
+            var slices = AnalyzeTrackWaveform(fileInfo.FullName, sliceCount, cancellationToken);
+            if (slices.Count > 0)
+            {
+                await WriteCachedWaveformAsync(cachePath, slices, cancellationToken);
+            }
+
+            return slices;
+        }, cancellationToken);
     }
 
     public void Dispose()
@@ -243,6 +281,162 @@ public sealed class LocalAudioAnalysisService : IDisposable
         return levels;
     }
 
+    private static IReadOnlyList<TrackWaveformSlice> AnalyzeTrackWaveform(
+        string filePath,
+        int sliceCount,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var reader = new AudioFileReader(filePath);
+            if (reader.TotalTime <= TimeSpan.Zero)
+            {
+                return [];
+            }
+
+            var channels = Math.Max(1, reader.WaveFormat.Channels);
+            var sampleRate = reader.WaveFormat.SampleRate;
+            var slices = new List<TrackWaveformSlice>(sliceCount);
+
+            for (var index = 0; index < sliceCount; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var progress = index / Math.Max(1d, sliceCount - 1d);
+                reader.CurrentTime = TimeSpan.FromTicks(Convert.ToInt64(reader.TotalTime.Ticks * progress));
+                var monoSamples = ReadMonoFrames(reader, channels, TrackWaveformWindowFrameCount);
+                if (monoSamples.Length == 0)
+                {
+                    slices.Add(new TrackWaveformSlice(0, 0, 0, 0, 0));
+                    continue;
+                }
+
+                var bands = AnalyzeBands(monoSamples, sampleRate);
+                var total = RootMeanSquare(monoSamples);
+                var peak = monoSamples.Max(sample => Math.Abs(sample));
+                var low = bands.Take(3).DefaultIfEmpty(0).Average() * total;
+                var mid = bands.Skip(3).Take(1).DefaultIfEmpty(0).Average() * total;
+                var high = bands.Skip(4).DefaultIfEmpty(0).Average() * total;
+                slices.Add(new TrackWaveformSlice(low, mid, high, peak, total));
+            }
+
+            return NormalizeTrackWaveform(slices);
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static double[] ReadMonoFrames(AudioFileReader reader, int channels, int frameCount)
+    {
+        var interleaved = new float[frameCount * channels];
+        var samplesRead = reader.Read(interleaved, 0, interleaved.Length);
+        var framesRead = samplesRead / channels;
+        if (framesRead <= 0)
+        {
+            return [];
+        }
+
+        var monoSamples = new double[framesRead];
+        for (var frame = 0; frame < framesRead; frame++)
+        {
+            var sum = 0d;
+            var sampleOffset = frame * channels;
+            for (var channel = 0; channel < channels; channel++)
+            {
+                sum += interleaved[sampleOffset + channel];
+            }
+
+            monoSamples[frame] = Math.Clamp(sum / channels, -1d, 1d);
+        }
+
+        return monoSamples;
+    }
+
+    private static IReadOnlyList<TrackWaveformSlice> NormalizeTrackWaveform(IReadOnlyList<TrackWaveformSlice> slices)
+    {
+        var maxLow = Math.Max(0.000001, slices.Max(slice => slice.LowEnergy));
+        var maxMid = Math.Max(0.000001, slices.Max(slice => slice.MidEnergy));
+        var maxHigh = Math.Max(0.000001, slices.Max(slice => slice.HighEnergy));
+        var maxPeak = Math.Max(0.000001, slices.Max(slice => slice.PeakEnergy));
+        var maxTotal = Math.Max(0.000001, slices.Max(slice => slice.TotalEnergy));
+
+        return slices
+            .Select(slice => new TrackWaveformSlice(
+                Math.Clamp(slice.LowEnergy / maxLow, 0, 1),
+                Math.Clamp(slice.MidEnergy / maxMid, 0, 1),
+                Math.Clamp(slice.HighEnergy / maxHigh, 0, 1),
+                Math.Clamp(slice.PeakEnergy / maxPeak, 0, 1),
+                Math.Clamp(slice.TotalEnergy / maxTotal, 0, 1)))
+            .ToArray();
+    }
+
+    private static double RootMeanSquare(IReadOnlyList<double> samples)
+    {
+        if (samples.Count == 0)
+        {
+            return 0;
+        }
+
+        var sumSquares = 0d;
+        for (var index = 0; index < samples.Count; index++)
+        {
+            sumSquares += samples[index] * samples[index];
+        }
+
+        return Math.Sqrt(sumSquares / samples.Count);
+    }
+
+    private static async Task<IReadOnlyList<TrackWaveformSlice>> ReadCachedWaveformAsync(
+        string cachePath,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!File.Exists(cachePath))
+            {
+                return [];
+            }
+
+            await using var stream = File.OpenRead(cachePath);
+            return await JsonSerializer.DeserializeAsync<List<TrackWaveformSlice>>(stream, cancellationToken: cancellationToken)
+                ?? [];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static async Task WriteCachedWaveformAsync(
+        string cachePath,
+        IReadOnlyList<TrackWaveformSlice> slices,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var stream = File.Create(cachePath);
+            await JsonSerializer.SerializeAsync(stream, slices, cancellationToken: cancellationToken);
+        }
+        catch
+        {
+        }
+    }
+
+    private static string CreateWaveformCacheKey(FileInfo fileInfo, int sliceCount)
+    {
+        var rawKey = $"waveform|{sliceCount}|{fileInfo.FullName}|{fileInfo.LastWriteTimeUtc.Ticks}".ToLowerInvariant();
+        var hash = SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(rawKey));
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string WaveformCacheFolder() =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "DancePilot",
+            "Waveforms");
+
     private static double[] Smooth(
         ref double[] previous,
         double[] current,
@@ -283,3 +477,10 @@ public sealed record LocalAudioSpectrumSnapshot(
     double High,
     int SampleRate,
     double BeatPulse = 0);
+
+public sealed record TrackWaveformSlice(
+    double LowEnergy,
+    double MidEnergy,
+    double HighEnergy,
+    double PeakEnergy,
+    double TotalEnergy);

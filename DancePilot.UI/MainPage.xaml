@@ -180,46 +180,52 @@
 
                         <Grid Grid.Row="1" ColumnSpacing="16">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="100" />
-                                <ColumnDefinition Width="300" />
+                                <ColumnDefinition Width="110" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <Border Width="96" Height="96" Background="#111922" BorderBrush="#2F3C48" BorderThickness="1" CornerRadius="6" Padding="2">
+                            <Border Width="104" Height="104" Background="#111922" BorderBrush="#2F3C48" BorderThickness="1" CornerRadius="6" Padding="2" VerticalAlignment="Top">
                                 <Image Source="{x:Bind ViewModel.CurrentDeckAlbumArt, Mode=OneWay}" Stretch="UniformToFill" />
                             </Border>
-                            <StackPanel Grid.Column="1" Spacing="5" VerticalAlignment="Center">
-                                <TextBlock Text="{x:Bind ViewModel.DeckATitle, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="20" FontWeight="Bold" TextWrapping="WrapWholeWords" MaxLines="2" />
-                                <TextBlock Text="{x:Bind ViewModel.DeckAArtist, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="15" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="{x:Bind ViewModel.DeckADetail, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" />
-                            </StackPanel>
-                            <Border Grid.Column="2" Height="92" Background="#070B10" BorderBrush="#1C2832" BorderThickness="1" CornerRadius="4" Padding="6,4" VerticalAlignment="Center" HorizontalAlignment="Stretch">
-                                <Grid>
-                                    <Border Height="1" Background="#273540" Opacity="0.78" VerticalAlignment="Center" />
-                                    <ItemsControl ItemsSource="{x:Bind ViewModel.CurrentWaveform, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                        <ItemsControl.ItemsPanel>
-                                            <ItemsPanelTemplate>
-                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" />
-                                            </ItemsPanelTemplate>
-                                        </ItemsControl.ItemsPanel>
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate>
-                                                <Grid Width="2.2" Height="84" Margin="0.1,0">
-                                                    <Grid.RowDefinitions>
-                                                        <RowDefinition Height="41" />
-                                                        <RowDefinition Height="2" />
-                                                        <RowDefinition Height="41" />
-                                                    </Grid.RowDefinitions>
-                                                    <Rectangle Grid.Row="0" Width="1.4" Height="{Binding PeakHeight}" Fill="{Binding PeakFill}" Opacity="0.16" RadiusX="0.7" RadiusY="0.7" VerticalAlignment="Bottom" HorizontalAlignment="Center" />
-                                                    <Rectangle Grid.Row="0" Width="1.8" Height="{Binding UpperHeight}" Fill="{Binding UpperFill}" RadiusX="0.9" RadiusY="0.9" VerticalAlignment="Bottom" HorizontalAlignment="Center" />
-                                                    <Rectangle Grid.Row="1" Height="1" Fill="#2A3742" Opacity="0.65" VerticalAlignment="Center" />
-                                                    <Rectangle Grid.Row="2" Width="1.4" Height="{Binding PeakHeight}" Fill="{Binding PeakFill}" Opacity="0.12" RadiusX="0.7" RadiusY="0.7" VerticalAlignment="Top" HorizontalAlignment="Center" />
-                                                    <Rectangle Grid.Row="2" Width="1.8" Height="{Binding LowerHeight}" Fill="{Binding LowerFill}" RadiusX="0.9" RadiusY="0.9" VerticalAlignment="Top" HorizontalAlignment="Center" />
-                                                </Grid>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </Grid>
-                            </Border>
+                            <Grid Grid.Column="1" RowSpacing="5">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="72" />
+                                </Grid.RowDefinitions>
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{x:Bind ViewModel.DeckATitle, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="20" FontWeight="Bold" TextWrapping="WrapWholeWords" MaxLines="1" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{x:Bind ViewModel.DeckAArtist, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="15" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{x:Bind ViewModel.DeckADetail, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <Border Grid.Row="1" Background="#070B10" BorderBrush="#1C2832" BorderThickness="1" CornerRadius="4" Padding="6,3" HorizontalAlignment="Stretch">
+                                    <Grid>
+                                        <Border Height="1" Background="#273540" Opacity="0.72" VerticalAlignment="Center" />
+                                        <ItemsControl ItemsSource="{x:Bind ViewModel.CurrentWaveform, Mode=OneWay}" HorizontalAlignment="Stretch" VerticalAlignment="Center">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Width="2.5" Height="64" Margin="0.05,0">
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="31" />
+                                                            <RowDefinition Height="2" />
+                                                            <RowDefinition Height="31" />
+                                                        </Grid.RowDefinitions>
+                                                        <Rectangle Grid.Row="0" Width="1.2" Height="{Binding PeakHeight}" Fill="{Binding PeakFill}" Opacity="0.16" RadiusX="0.6" RadiusY="0.6" VerticalAlignment="Bottom" HorizontalAlignment="Center" />
+                                                        <Rectangle Grid.Row="0" Width="1.7" Height="{Binding UpperHeight}" Fill="{Binding UpperFill}" RadiusX="0.8" RadiusY="0.8" VerticalAlignment="Bottom" HorizontalAlignment="Center" />
+                                                        <Rectangle Grid.Row="1" Height="1" Fill="#2A3742" Opacity="0.65" VerticalAlignment="Center" />
+                                                        <Rectangle Grid.Row="2" Width="1.2" Height="{Binding PeakHeight}" Fill="{Binding PeakFill}" Opacity="0.12" RadiusX="0.6" RadiusY="0.6" VerticalAlignment="Top" HorizontalAlignment="Center" />
+                                                        <Rectangle Grid.Row="2" Width="1.7" Height="{Binding LowerHeight}" Fill="{Binding LowerFill}" RadiusX="0.8" RadiusY="0.8" VerticalAlignment="Top" HorizontalAlignment="Center" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <Border Width="2" Background="#F5F8FA" Opacity="0.58" HorizontalAlignment="Center" />
+                                    </Grid>
+                                </Border>
+                            </Grid>
                         </Grid>
 
                         <ListView
@@ -322,46 +328,52 @@
 
                         <Grid Grid.Row="1" ColumnSpacing="16">
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="100" />
-                                <ColumnDefinition Width="300" />
+                                <ColumnDefinition Width="110" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <Border Width="96" Height="96" Background="#111922" BorderBrush="#2F3C48" BorderThickness="1" CornerRadius="6" Padding="2">
+                            <Border Width="104" Height="104" Background="#111922" BorderBrush="#2F3C48" BorderThickness="1" CornerRadius="6" Padding="2" VerticalAlignment="Top">
                                 <Image Source="{x:Bind ViewModel.NextDeckAlbumArt, Mode=OneWay}" Stretch="UniformToFill" />
                             </Border>
-                            <StackPanel Grid.Column="1" Spacing="5" VerticalAlignment="Center">
-                                <TextBlock Text="{x:Bind ViewModel.DeckBTitle, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="20" FontWeight="Bold" TextWrapping="WrapWholeWords" MaxLines="2" />
-                                <TextBlock Text="{x:Bind ViewModel.DeckBArtist, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="15" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="{x:Bind ViewModel.DeckBDetail, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" TextWrapping="WrapWholeWords" />
-                            </StackPanel>
-                            <Border Grid.Column="2" Height="92" Background="#070B10" BorderBrush="#1C2832" BorderThickness="1" CornerRadius="4" Padding="6,4" VerticalAlignment="Center" HorizontalAlignment="Stretch">
-                                <Grid>
-                                    <Border Height="1" Background="#273540" Opacity="0.78" VerticalAlignment="Center" />
-                                    <ItemsControl ItemsSource="{x:Bind ViewModel.NextWaveform, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                        <ItemsControl.ItemsPanel>
-                                            <ItemsPanelTemplate>
-                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" />
-                                            </ItemsPanelTemplate>
-                                        </ItemsControl.ItemsPanel>
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate>
-                                                <Grid Width="2.2" Height="84" Margin="0.1,0">
-                                                    <Grid.RowDefinitions>
-                                                        <RowDefinition Height="41" />
-                                                        <RowDefinition Height="2" />
-                                                        <RowDefinition Height="41" />
-                                                    </Grid.RowDefinitions>
-                                                    <Rectangle Grid.Row="0" Width="1.4" Height="{Binding PeakHeight}" Fill="{Binding PeakFill}" Opacity="0.16" RadiusX="0.7" RadiusY="0.7" VerticalAlignment="Bottom" HorizontalAlignment="Center" />
-                                                    <Rectangle Grid.Row="0" Width="1.8" Height="{Binding UpperHeight}" Fill="{Binding UpperFill}" RadiusX="0.9" RadiusY="0.9" VerticalAlignment="Bottom" HorizontalAlignment="Center" />
-                                                    <Rectangle Grid.Row="1" Height="1" Fill="#2A3742" Opacity="0.65" VerticalAlignment="Center" />
-                                                    <Rectangle Grid.Row="2" Width="1.4" Height="{Binding PeakHeight}" Fill="{Binding PeakFill}" Opacity="0.12" RadiusX="0.7" RadiusY="0.7" VerticalAlignment="Top" HorizontalAlignment="Center" />
-                                                    <Rectangle Grid.Row="2" Width="1.8" Height="{Binding LowerHeight}" Fill="{Binding LowerFill}" RadiusX="0.9" RadiusY="0.9" VerticalAlignment="Top" HorizontalAlignment="Center" />
-                                                </Grid>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </Grid>
-                            </Border>
+                            <Grid Grid.Column="1" RowSpacing="5">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="72" />
+                                </Grid.RowDefinitions>
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{x:Bind ViewModel.DeckBTitle, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="20" FontWeight="Bold" TextWrapping="WrapWholeWords" MaxLines="1" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{x:Bind ViewModel.DeckBArtist, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="15" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{x:Bind ViewModel.DeckBDetail, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <Border Grid.Row="1" Background="#070B10" BorderBrush="#1C2832" BorderThickness="1" CornerRadius="4" Padding="6,3" HorizontalAlignment="Stretch">
+                                    <Grid>
+                                        <Border Height="1" Background="#273540" Opacity="0.72" VerticalAlignment="Center" />
+                                        <ItemsControl ItemsSource="{x:Bind ViewModel.NextWaveform, Mode=OneWay}" HorizontalAlignment="Stretch" VerticalAlignment="Center">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Width="2.5" Height="64" Margin="0.05,0">
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="31" />
+                                                            <RowDefinition Height="2" />
+                                                            <RowDefinition Height="31" />
+                                                        </Grid.RowDefinitions>
+                                                        <Rectangle Grid.Row="0" Width="1.2" Height="{Binding PeakHeight}" Fill="{Binding PeakFill}" Opacity="0.16" RadiusX="0.6" RadiusY="0.6" VerticalAlignment="Bottom" HorizontalAlignment="Center" />
+                                                        <Rectangle Grid.Row="0" Width="1.7" Height="{Binding UpperHeight}" Fill="{Binding UpperFill}" RadiusX="0.8" RadiusY="0.8" VerticalAlignment="Bottom" HorizontalAlignment="Center" />
+                                                        <Rectangle Grid.Row="1" Height="1" Fill="#2A3742" Opacity="0.65" VerticalAlignment="Center" />
+                                                        <Rectangle Grid.Row="2" Width="1.2" Height="{Binding PeakHeight}" Fill="{Binding PeakFill}" Opacity="0.12" RadiusX="0.6" RadiusY="0.6" VerticalAlignment="Top" HorizontalAlignment="Center" />
+                                                        <Rectangle Grid.Row="2" Width="1.7" Height="{Binding LowerHeight}" Fill="{Binding LowerFill}" RadiusX="0.8" RadiusY="0.8" VerticalAlignment="Top" HorizontalAlignment="Center" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <Border Width="2" Background="#F5F8FA" Opacity="0.58" HorizontalAlignment="Center" />
+                                    </Grid>
+                                </Border>
+                            </Grid>
                         </Grid>
 
                         <ListView
