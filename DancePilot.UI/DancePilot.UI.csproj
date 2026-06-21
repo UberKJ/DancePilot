@@ -87,5 +87,14 @@
     <PublishReadyToRun Condition="'$(Configuration)' != 'Debug'">True</PublishReadyToRun>
     <PublishTrimmed Condition="'$(Configuration)' == 'Debug'">False</PublishTrimmed>
     <PublishTrimmed Condition="'$(Configuration)' != 'Debug'">True</PublishTrimmed>
+    <DancePilotDevCodeSigningSubject>CN=DancePilot Local Dev Code Signing</DancePilotDevCodeSigningSubject>
+    <DancePilotPowerShellHost Condition="'$(DancePilotPowerShellHost)' == ''">pwsh</DancePilotPowerShellHost>
   </PropertyGroup>
+
+  <Target Name="SignDancePilotDebugAppHost"
+          AfterTargets="Build"
+          Condition="'$(Configuration)' == 'Debug' and '$(OS)' == 'Windows_NT' and Exists('$(TargetDir)$(AssemblyName).exe')">
+    <Exec Command="$(DancePilotPowerShellHost) -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\scripts\Sign-DancePilotDevBuild.ps1&quot; -FilePath &quot;$(TargetDir)$(AssemblyName).exe&quot; -Subject &quot;$(DancePilotDevCodeSigningSubject)&quot;"
+          ContinueOnError="WarnAndContinue" />
+  </Target>
 </Project>
