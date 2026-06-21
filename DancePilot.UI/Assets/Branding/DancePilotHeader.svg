@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="480" viewBox="0 0 1920 480">
+  <rect width="1920" height="480" fill="#05080B"/>
+  <g opacity="0.35" stroke="#27313B" stroke-width="1"><path d="M0 80H1920 M0 160H1920 M0 240H1920 M0 320H1920 M0 400H1920"/><path d="M120 0V480 M240 0V480 M360 0V480 M480 0V480 M600 0V480 M720 0V480 M840 0V480 M960 0V480 M1080 0V480 M1200 0V480 M1320 0V480 M1440 0V480 M1560 0V480 M1680 0V480 M1800 0V480"/></g>
+  <rect x="86" y="116" width="420" height="278" rx="22" fill="#0B1117" stroke="#F4B400" stroke-width="5"/>
+  <rect x="1414" y="116" width="420" height="278" rx="22" fill="#0B1117" stroke="#1EA7FF" stroke-width="5"/>
+  <circle cx="184" cy="260" r="54" fill="#080E14" stroke="#F4B400" stroke-width="5"/><circle cx="184" cy="260" r="18" fill="#F4B400"/>
+  <circle cx="1512" cy="260" r="54" fill="#080E14" stroke="#1EA7FF" stroke-width="5"/><circle cx="1512" cy="260" r="18" fill="#1EA7FF"/>
+  <text x="184" y="152" text-anchor="middle" font-family="Segoe UI, Arial" font-size="54" font-weight="700" fill="#F4B400">A</text>
+  <text x="1512" y="152" text-anchor="middle" font-family="Segoe UI, Arial" font-size="54" font-weight="700" fill="#1EA7FF">B</text>
+  <text x="960" y="160" text-anchor="middle" font-family="Segoe UI, Arial" font-size="92" font-weight="800" fill="#F5F8FA">DancePilot</text>
+  <text x="960" y="224" text-anchor="middle" font-family="Segoe UI, Arial" font-size="34" fill="#B5C0C9">Live Dance DJ Assistant</text>
+  <rect x="640" y="266" width="640" height="64" rx="18" fill="#0A1912" stroke="#32E76A" stroke-width="3"/>
+  <text x="960" y="308" text-anchor="middle" font-family="Segoe UI, Arial" font-size="28" font-weight="700" fill="#32E76A">AUTOPILOT  |  CROWD ENERGY  |  REQUESTS</text>
+  <path d="M0 314 C220 280 320 344 520 312 S860 262 1080 314 S1460 365 1920 302" fill="none" stroke="#1EA7FF" stroke-width="5" opacity="0.8"/>
+  <path d="M0 368 C240 338 380 384 620 360 S940 322 1160 360 S1520 402 1920 350" fill="none" stroke="#F4B400" stroke-width="4" opacity="0.75"/>
+  <text x="960" y="420" text-anchor="middle" font-family="Segoe UI, Arial" font-size="22" fill="#B5C0C9">Deck A now playing - Deck B next up - legal Spotify Connect control - local-first dance metadata</text>
+</svg>

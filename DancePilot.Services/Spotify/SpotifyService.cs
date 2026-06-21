@@ -110,7 +110,7 @@ public sealed class SpotifyService
         CancellationToken cancellationToken = default)
     {
         var tracks = new List<SpotifyTrackMetadata>();
-        var fields = Uri.EscapeDataString("items(added_at,is_local,item(id,name,type,is_local,is_playable,artists(name),album(name),duration_ms,uri,external_urls,popularity),track(id,name,type,is_local,is_playable,artists(name),album(name),duration_ms,uri,external_urls,popularity)),next,total");
+        var fields = Uri.EscapeDataString("items(added_at,is_local,item(id,name,type,is_local,is_playable,artists(name),album(name,images(width,height,url)),duration_ms,uri,external_urls,popularity),track(id,name,type,is_local,is_playable,artists(name),album(name,images(width,height,url)),duration_ms,uri,external_urls,popularity)),next,total");
         var url = new Uri(ApiBaseUri, $"playlists/{Uri.EscapeDataString(playlistId)}/items?limit=50&fields={fields}");
 
         while (url is not null)

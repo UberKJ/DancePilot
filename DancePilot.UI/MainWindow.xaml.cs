@@ -16,6 +16,8 @@ namespace DancePilot.UI;
 public sealed partial class MainWindow : Window
 {
     private bool _mainPageNavigationStarted;
+    private bool _shutdownCompleted;
+    private bool _shutdownInProgress;
 
     public MainWindow()
     {
@@ -34,9 +36,47 @@ public sealed partial class MainWindow : Window
         AppWindow.SetIcon("Assets/AppIcon.ico");
         NavigateToMainPage("MainWindow constructor");
 
+        AppWindow.Closing += AppWindow_Closing;
         Activated += (_, _) => NavigateToMainPage("MainWindow activated fallback");
 
         StartupLog.Write("MainWindow constructor complete");
+    }
+
+    private async void AppWindow_Closing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        if (_shutdownCompleted)
+        {
+            return;
+        }
+
+        args.Cancel = true;
+        if (_shutdownInProgress)
+        {
+            return;
+        }
+
+        _shutdownInProgress = true;
+        try
+        {
+            await ShutdownMainPageAsync();
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write(ex, "MainWindow shutdown cleanup failed");
+        }
+        finally
+        {
+            _shutdownCompleted = true;
+            Close();
+        }
+    }
+
+    private async Task ShutdownMainPageAsync()
+    {
+        if (RootFrame.Content is MainPage mainPage)
+        {
+            await mainPage.ShutdownAsync();
+        }
     }
 
     private void NavigateToMainPage(string context)

@@ -7,9 +7,10 @@ using DancePilot.Data.Repositories;
 using DancePilot.Data.Storage;
 using DancePilot.Services.MockData;
 using DancePilot.Services.LocalMusic;
+using DancePilot.Services.Media;
 using DancePilot.Services.Spotify;
-using DancePilot.Services.Spotify.Auth;
 using DancePilot.Services.Spotify.Playback;
+using DancePilot.UI.Composition;
 using DancePilot.UI.Diagnostics;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
@@ -33,6 +34,21 @@ public sealed class MainPageViewModel : ObservableObject
     private const string DefaultCurrentAlbumArtPath = "ms-appx:///Assets/AlbumDanceFloor.png";
     private const string DefaultNextAlbumArtPath = "ms-appx:///Assets/AlbumDanceFloor.png";
     private const string DefaultLocalAlbumArtPath = "ms-appx:///Assets/AlbumDanceFloor.png";
+    private const int DeckWaveformBarCount = 112;
+    private const double DeckAnalyzerHalfHeight = 42;
+    private const int FrequencyAnalyzerBandCount = 64;
+    private const double LateTransitionSkipFadeSeconds = 1.0;
+    private const double DefaultTransitionOverlapSeconds = 8;
+    private const double DefaultSmoothFadeInSeconds = 6;
+    private const double DefaultSmoothFadeOutSeconds = 10;
+    private const string LocalSortFolder = "Folder";
+    private const string LocalSortTitle = "Title";
+    private const string LocalSortArtist = "Artist";
+    private const string LocalSortBpm = "BPM";
+    private const string LocalSortKey = "Key";
+    private const string LocalSortNewest = "Newest";
+    private const string LocalSortDuration = "Duration";
+    private const string LocalSortFileType = "File type";
     private readonly SpotifySettingsStore _spotifySettingsStore;
     private readonly SpotifyService _spotifyService;
     private readonly SpotifyImportRepository _spotifyImportRepository;
@@ -41,9 +57,15 @@ public sealed class MainPageViewModel : ObservableObject
     private readonly SpotifyDeviceManager _spotifyDeviceManager;
     private readonly DancePilotPlaybackCoordinator _playbackCoordinator;
     private readonly PlaybackSettingsRepository _playbackSettingsRepository;
+    private readonly SessionStateRepository _sessionStateRepository;
     private readonly SpotifyLibraryRepository _spotifyLibraryRepository;
+    private readonly LocalPlaylistRepository _localPlaylistRepository;
     private readonly LocalMusicLibraryService _localMusicLibraryService;
+    private readonly LocalAudioAnalysisService _localAudioAnalysisService;
+    private readonly SystemAudioOutputAnalysisService _systemAudioOutputAnalysisService;
+    private readonly AlbumArtCacheService _albumArtCacheService;
     private readonly MediaPlayer _localMediaPlayer;
+    private readonly Microsoft.UI.Dispatching.DispatcherQueue? _dispatcherQueue;
     private readonly DispatcherTimer _playbackTimer;
     private readonly DispatcherTimer _analyzerTimer;
     private readonly Dictionary<string, int?> _selectedDeckQueueItemIds = new()
@@ -51,11 +73,18 @@ public sealed class MainPageViewModel : ObservableObject
         ["Deck A"] = null,
         ["Deck B"] = null
     };
+    private readonly Dictionary<string, int?> _lastPlayedDeckQueueItemIds = new()
+    {
+        ["Deck A"] = null,
+        ["Deck B"] = null
+    };
     private readonly List<LocalMusicTrack> _allLocalMusicTracks = [];
     private readonly List<DancePilotQueueItem> _deckAQueue = [];
     private readonly List<DancePilotQueueItem> _deckBQueue = [];
+    private readonly List<DjWaveformFrame> _deckAWaveformHistory = [];
+    private readonly List<DjWaveformFrame> _deckBWaveformHistory = [];
+    private int _nextDeckQueueItemId = 1;
     private bool _suppressSpotifyPlaylistAutoLoad;
-    private int _analyzerFrame;
     private string _spotifyClientId = string.Empty;
     private string _spotifyRedirectUri = SpotifyDefaults.RedirectUri;
     private string _spotifyConnectionStatus = "Not connected";
@@ -69,12 +98,18 @@ public sealed class MainPageViewModel : ObservableObject
     private SpotifyPlaylistSummary? _selectedImportedSpotifyPlaylist;
     private SpotifyTrackMetadata? _selectedImportedSpotifyTrack;
     private LocalMusicTrack? _selectedLocalMusicTrack;
+    private LocalMusicPlaylist? _selectedLocalMusicPlaylist;
     private DancePilotQueueItem? _selectedActiveDeckQueueItem;
+    private DancePilotQueueItem? _selectedQueueViewDeckQueueItem;
     private string _localMusicSearchQuery = string.Empty;
-    private string _localLibraryStatus = "Click LOCAL to scan your Windows Music folder.";
+    private string _localMusicFolderPath = Environment.GetFolderPath(Environment.SpecialFolder.MyMusic);
+    private string _localLibraryStatus = "Pick a music folder or click LOCAL to scan your Windows Music folder.";
+    private string _localPlaylistStatus = "Create or select a local playlist for quick deck adds.";
+    private string _selectedLocalMusicSortOption = LocalSortFolder;
     private string _activeSource = SourceSpotify;
     private string _selectedPlaybackMode = SpotifyPlaybackModes.SpotifyConnect;
     private string _activeDeckName = "Deck A";
+    private string _queueViewDeckName = "Deck A";
     private string _playingDeckName = "Deck A";
     private int? _playingDeckQueueItemId;
     private int? _lastTransitionSourceItemId;
@@ -83,16 +118,19 @@ public sealed class MainPageViewModel : ObservableObject
     private bool _spotifyAutopilotEnabled;
     private bool _deckTransitionEnabled = true;
     private double _autoplaySecondsBeforeEnd = 8;
-    private double _transitionSecondsBeforeEnd = 8;
-    private double _fadeInSeconds = 4;
-    private double _fadeOutSeconds = 8;
+    private double _transitionOverlapSeconds = DefaultTransitionOverlapSeconds;
+    private double _fadeInSeconds = DefaultSmoothFadeInSeconds;
+    private double _fadeOutSeconds = DefaultSmoothFadeOutSeconds;
     private bool _alwaysFadeSongs = true;
     private bool _startTransitionOnFade = true;
+    private bool _removePlayedQueueItems = true;
     private double _lowFrequencyGain;
     private double _midFrequencyGain;
     private double _highFrequencyGain;
     private double _crossfaderPosition = 50;
     private double _defaultSpotifyVolume = 70;
+    private double _deckAVolume = 70;
+    private double _deckBVolume = 70;
     private double _seekPositionSeconds;
     private double _seekPositionMaximumSeconds = 1;
     private bool _isSeekPositionChanging;
@@ -110,41 +148,41 @@ public sealed class MainPageViewModel : ObservableObject
     private string _currentSpotifyPlaylistName = "No Spotify playlist active";
     private string _nextUpTitle = "No queued recommendation";
     private string _nextUpArtist = "DancePilot queue";
-    private string _selectedTransitionMode = TransitionSameDeck;
+    private string _selectedTransitionMode = TransitionOppositeDeck;
     private bool _isPlaybackRefreshRunning;
+    private bool _isTransitionAdvanceRunning;
     private bool _isAutoPilotEnabled = true;
+    private bool _isShuttingDown;
+    private bool _isRestoringSessionState;
+    private bool _hasLoadedSessionState;
+    private CancellationTokenSource? _sessionStateSaveDebounce;
+    private int _analyzerFrame;
 
     public MainPageViewModel()
+        : this(AppServicesFactory.CreateDefault())
+    {
+    }
+
+    internal MainPageViewModel(AppServices services)
     {
         StartupLog.Write("MainPageViewModel constructor start");
-        var appData = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "DancePilot");
-        Directory.CreateDirectory(appData);
-
-        _spotifySettingsStore = new SpotifySettingsStore();
-
-        var tokenStore = new EncryptedFileSpotifyTokenStore();
-        var httpClient = new HttpClient();
-        var authService = new SpotifyAuthService(httpClient, tokenStore);
-        _spotifyService = new SpotifyService(httpClient, tokenStore, authService);
-
-        var databaseOptions = new DatabaseOptions
-        {
-            DatabasePath = Path.Combine(appData, "dancepilot.sqlite")
-        };
-        var connectionFactory = new SqliteConnectionFactory(databaseOptions);
-        _spotifyImportRepository = new SpotifyImportRepository(connectionFactory);
-        _spotifyPlaylistImporter = new SpotifyPlaylistImporter(_spotifyService, _spotifyImportRepository);
-        _spotifyPlayerService = new SpotifyPlayerService(_spotifyService);
-        _spotifyDeviceManager = new SpotifyDeviceManager(_spotifyService);
-        _playbackSettingsRepository = new PlaybackSettingsRepository(connectionFactory);
-        _spotifyLibraryRepository = new SpotifyLibraryRepository(connectionFactory);
-        _localMusicLibraryService = new LocalMusicLibraryService();
-        _localMediaPlayer = new MediaPlayer();
-        var queueRepository = new PlaybackQueueRepository(connectionFactory);
-        var historyRepository = new PlaybackHistoryRepository(connectionFactory);
-        _playbackCoordinator = new DancePilotPlaybackCoordinator(_spotifyPlayerService, queueRepository, historyRepository);
+        _spotifySettingsStore = services.SpotifySettingsStore;
+        _spotifyService = services.SpotifyService;
+        _spotifyImportRepository = services.SpotifyImportRepository;
+        _spotifyPlaylistImporter = services.SpotifyPlaylistImporter;
+        _spotifyPlayerService = services.SpotifyPlayerService;
+        _spotifyDeviceManager = services.SpotifyDeviceManager;
+        _playbackSettingsRepository = services.PlaybackSettingsRepository;
+        _sessionStateRepository = services.SessionStateRepository;
+        _spotifyLibraryRepository = services.SpotifyLibraryRepository;
+        _localPlaylistRepository = services.LocalPlaylistRepository;
+        _localMusicLibraryService = services.LocalMusicLibraryService;
+        _localAudioAnalysisService = services.LocalAudioAnalysisService;
+        _systemAudioOutputAnalysisService = services.SystemAudioOutputAnalysisService;
+        _albumArtCacheService = services.AlbumArtCacheService;
+        _localMediaPlayer = services.LocalMediaPlayer;
+        _playbackCoordinator = services.PlaybackCoordinator;
+        _dispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
         SpotifyLoginCommand = new AsyncRelayCommand(LoginSpotifyAsync);
         SpotifyLogoutCommand = new AsyncRelayCommand(LogoutSpotifyAsync);
@@ -177,12 +215,22 @@ public sealed class MainPageViewModel : ObservableObject
         LoadLocalMusicCommand = new AsyncRelayCommand(LoadLocalMusicAsync);
         SearchLocalMusicCommand = new AsyncRelayCommand(SearchLocalMusicAsync);
         PlaySelectedLocalMusicCommand = new AsyncRelayCommand(QueueSelectedLocalMusicAsync);
+        LoadLocalPlaylistsCommand = new AsyncRelayCommand(LoadLocalPlaylistsAsync);
+        AddFilteredLocalMusicToPlaylistCommand = new AsyncRelayCommand(AddFilteredLocalMusicToSelectedPlaylistAsync);
+        QueueSelectedLocalPlaylistToDeckACommand = new AsyncRelayCommand(() => QueueSelectedLocalPlaylistToDeckAsync("Deck A"));
+        QueueSelectedLocalPlaylistToDeckBCommand = new AsyncRelayCommand(() => QueueSelectedLocalPlaylistToDeckAsync("Deck B"));
+        DeleteSelectedLocalPlaylistCommand = new AsyncRelayCommand(DeleteSelectedLocalPlaylistAsync);
         PauseLocalMusicCommand = new RelayCommand(PauseLocalMusic);
         TogglePlaybackCommand = new AsyncRelayCommand(TogglePlaybackAsync);
+        PlayPauseDeckACommand = new AsyncRelayCommand(() => ToggleDeckPlaybackAsync("Deck A"));
+        PlayPauseDeckBCommand = new AsyncRelayCommand(() => ToggleDeckPlaybackAsync("Deck B"));
         SelectDeckACommand = new RelayCommand(() => SelectDeck("Deck A"));
         SelectDeckBCommand = new RelayCommand(() => SelectDeck("Deck B"));
+        ShowDeckAQueueCommand = new RelayCommand(() => ShowDeckQueue("Deck A"));
+        ShowDeckBQueueCommand = new RelayCommand(() => ShowDeckQueue("Deck B"));
         AddSelectedSourceToDeckACommand = new AsyncRelayCommand(() => QueueSelectedSourceToDeckAsync("Deck A"));
         AddSelectedSourceToDeckBCommand = new AsyncRelayCommand(() => QueueSelectedSourceToDeckAsync("Deck B"));
+        AddLoadedPlaylistToActiveDeckCommand = new AsyncRelayCommand(AddLoadedPlaylistToActiveDeckAsync);
         RandomizePlaylistToDeckACommand = new AsyncRelayCommand(() => RandomizeActiveSourceToDeckAsync("Deck A"));
         RandomizePlaylistToDeckBCommand = new AsyncRelayCommand(() => RandomizeActiveSourceToDeckAsync("Deck B"));
         ClearDeckAQueueCommand = new RelayCommand(() => ClearDeckQueue("Deck A"));
@@ -190,7 +238,7 @@ public sealed class MainPageViewModel : ObservableObject
 
         _playbackTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromSeconds(5)
+            Interval = TimeSpan.FromSeconds(1)
         };
         _playbackTimer.Tick += async (_, _) => await RefreshPlaybackAndAutopilotAsync();
         _playbackTimer.Start();
@@ -202,8 +250,33 @@ public sealed class MainPageViewModel : ObservableObject
         _analyzerTimer.Tick += (_, _) => UpdateDeckAnalyzers();
         _analyzerTimer.Start();
 
-        _ = InitializeAsync(connectionFactory);
+        _localMediaPlayer.MediaEnded += (_, _) => DispatchAsync(HandleLocalMediaEndedAsync);
+
+        _ = InitializeAsync(services.ConnectionFactory);
         StartupLog.Write("MainPageViewModel constructor complete");
+    }
+
+    private void DispatchAsync(Func<Task> action)
+    {
+        if (_dispatcherQueue is null)
+        {
+            _ = RunDispatchedAsync(action);
+            return;
+        }
+
+        _dispatcherQueue.TryEnqueue(async () => await RunDispatchedAsync(action));
+    }
+
+    private static async Task RunDispatchedAsync(Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write(ex, "Dispatched view model action failed");
+        }
     }
 
     public bool IsAutoPilotEnabled
@@ -253,7 +326,13 @@ public sealed class MainPageViewModel : ObservableObject
     public string SpotifySearchQuery
     {
         get => _spotifySearchQuery;
-        set => SetProperty(ref _spotifySearchQuery, value);
+        set
+        {
+            if (SetProperty(ref _spotifySearchQuery, value))
+            {
+                QueueSessionStateSave();
+            }
+        }
     }
 
     public SpotifyPlaylistSummary? SelectedSpotifyPlaylist
@@ -267,19 +346,33 @@ public sealed class MainPageViewModel : ObservableObject
             {
                 _ = PreviewSpotifyPlaylistFromSelectionAsync(value);
             }
+
+            QueueSessionStateSave();
         }
     }
 
     public SpotifyTrackMetadata? SelectedSpotifyTrack
     {
         get => _selectedSpotifyTrack;
-        set => SetProperty(ref _selectedSpotifyTrack, value);
+        set
+        {
+            if (SetProperty(ref _selectedSpotifyTrack, value))
+            {
+                QueueSessionStateSave();
+            }
+        }
     }
 
     public SpotifyTrackMetadata? SelectedSpotifySearchTrack
     {
         get => _selectedSpotifySearchTrack;
-        set => SetProperty(ref _selectedSpotifySearchTrack, value);
+        set
+        {
+            if (SetProperty(ref _selectedSpotifySearchTrack, value))
+            {
+                QueueSessionStateSave();
+            }
+        }
     }
 
     public SpotifyDevice? SelectedSpotifyDevice
@@ -298,19 +391,52 @@ public sealed class MainPageViewModel : ObservableObject
     public SpotifyPlaylistSummary? SelectedImportedSpotifyPlaylist
     {
         get => _selectedImportedSpotifyPlaylist;
-        set => SetProperty(ref _selectedImportedSpotifyPlaylist, value);
+        set
+        {
+            if (SetProperty(ref _selectedImportedSpotifyPlaylist, value))
+            {
+                QueueSessionStateSave();
+            }
+        }
     }
 
     public SpotifyTrackMetadata? SelectedImportedSpotifyTrack
     {
         get => _selectedImportedSpotifyTrack;
-        set => SetProperty(ref _selectedImportedSpotifyTrack, value);
+        set
+        {
+            if (SetProperty(ref _selectedImportedSpotifyTrack, value))
+            {
+                QueueSessionStateSave();
+            }
+        }
     }
 
     public LocalMusicTrack? SelectedLocalMusicTrack
     {
         get => _selectedLocalMusicTrack;
-        set => SetProperty(ref _selectedLocalMusicTrack, value);
+        set
+        {
+            if (SetProperty(ref _selectedLocalMusicTrack, value))
+            {
+                QueueSessionStateSave();
+            }
+        }
+    }
+
+    public LocalMusicPlaylist? SelectedLocalMusicPlaylist
+    {
+        get => _selectedLocalMusicPlaylist;
+        set
+        {
+            if (SetProperty(ref _selectedLocalMusicPlaylist, value))
+            {
+                LocalPlaylistStatus = value is null
+                    ? "Create or select a local playlist for quick deck adds."
+                    : $"Selected local playlist: {value.DisplayName}.";
+                QueueSessionStateSave();
+            }
+        }
     }
 
     public DancePilotQueueItem? SelectedActiveDeckQueueItem
@@ -323,6 +449,22 @@ public sealed class MainPageViewModel : ObservableObject
                 _selectedDeckQueueItemIds[ActiveDeckName] = value?.Id;
                 UpdateNextUpFromDecks();
                 RefreshDeckDisplayProperties();
+                QueueSessionStateSave();
+            }
+        }
+    }
+
+    public DancePilotQueueItem? SelectedQueueViewDeckQueueItem
+    {
+        get => _selectedQueueViewDeckQueueItem;
+        set
+        {
+            if (SetProperty(ref _selectedQueueViewDeckQueueItem, value))
+            {
+                _selectedDeckQueueItemIds[QueueViewDeckName] = value?.Id;
+                UpdateNextUpFromDecks();
+                RefreshDeckDisplayProperties();
+                QueueSessionStateSave();
             }
         }
     }
@@ -330,13 +472,66 @@ public sealed class MainPageViewModel : ObservableObject
     public string LocalMusicSearchQuery
     {
         get => _localMusicSearchQuery;
-        set => SetProperty(ref _localMusicSearchQuery, value);
+        set
+        {
+            if (SetProperty(ref _localMusicSearchQuery, value))
+            {
+                QueueSessionStateSave();
+            }
+        }
+    }
+
+    public IReadOnlyList<string> LocalMusicSortOptions { get; } =
+    [
+        LocalSortFolder,
+        LocalSortTitle,
+        LocalSortArtist,
+        LocalSortBpm,
+        LocalSortKey,
+        LocalSortNewest,
+        LocalSortDuration,
+        LocalSortFileType
+    ];
+
+    public string SelectedLocalMusicSortOption
+    {
+        get => _selectedLocalMusicSortOption;
+        set
+        {
+            var normalized = LocalMusicSortOptions.Contains(value) ? value : LocalSortFolder;
+            if (SetProperty(ref _selectedLocalMusicSortOption, normalized))
+            {
+                ApplyLocalMusicFilter();
+                QueueSessionStateSave();
+            }
+        }
+    }
+
+    public string LocalMusicFolderPath
+    {
+        get => _localMusicFolderPath;
+        set
+        {
+            var normalized = string.IsNullOrWhiteSpace(value)
+                ? Environment.GetFolderPath(Environment.SpecialFolder.MyMusic)
+                : value.Trim();
+            if (SetProperty(ref _localMusicFolderPath, normalized))
+            {
+                QueueSessionStateSave();
+            }
+        }
     }
 
     public string LocalLibraryStatus
     {
         get => _localLibraryStatus;
         private set => SetProperty(ref _localLibraryStatus, value);
+    }
+
+    public string LocalPlaylistStatus
+    {
+        get => _localPlaylistStatus;
+        private set => SetProperty(ref _localPlaylistStatus, value);
     }
 
     public string ActiveSource
@@ -362,12 +557,17 @@ public sealed class MainPageViewModel : ObservableObject
                 if (normalized == SourceLocal)
                 {
                     SelectedPlaybackMode = SpotifyPlaybackModes.LocalFilesFuture;
-                    _ = LoadLocalMusicAsync();
+                    if (!_isRestoringSessionState)
+                    {
+                        _ = LoadLocalMusicAsync();
+                    }
                 }
                 else if (normalized == SourceSpotify && SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
                 {
                     SelectedPlaybackMode = SpotifyPlaybackModes.SpotifyConnect;
                 }
+
+                QueueSessionStateSave();
             }
         }
     }
@@ -392,7 +592,9 @@ public sealed class MainPageViewModel : ObservableObject
         ? new GridLength(310)
         : new GridLength(0);
 
-    public GridLength RequestsColumnWidth => new(320);
+    public GridLength SourceSetupColumnWidth => new(360);
+
+    public GridLength RequestsColumnWidth => SourceSetupColumnWidth;
 
     public GridLength SpotifySearchRowHeight => ActiveSource == SourceSpotify
         ? new GridLength(1, GridUnitType.Auto)
@@ -425,12 +627,63 @@ public sealed class MainPageViewModel : ObservableObject
         {
             if (SetProperty(ref _activeDeckName, value))
             {
+                _defaultSpotifyVolume = ResolveDeckVolume(_activeDeckName);
                 OnPropertyChanged(nameof(CurrentDeckHeader));
                 OnPropertyChanged(nameof(NextDeckHeader));
+                OnPropertyChanged(nameof(DefaultSpotifyVolume));
+                OnPropertyChanged(nameof(DefaultSpotifyVolumeDisplay));
                 RefreshDeckDisplayProperties();
+                QueueSessionStateSave();
             }
         }
     }
+
+    public string QueueViewDeckName
+    {
+        get => _queueViewDeckName;
+        private set
+        {
+            var normalizedDeckName = NormalizeDeckName(value);
+            if (SetProperty(ref _queueViewDeckName, normalizedDeckName))
+            {
+                RefreshQueueViewDeckQueue();
+                OnPropertyChanged(nameof(QueueViewDeckHeader));
+                OnPropertyChanged(nameof(QueueViewDeckCountDisplay));
+                OnPropertyChanged(nameof(QueueViewDeckBrush));
+                OnPropertyChanged(nameof(QueueViewDeckAButtonBackground));
+                OnPropertyChanged(nameof(QueueViewDeckAButtonBorderBrush));
+                OnPropertyChanged(nameof(QueueViewDeckAButtonForeground));
+                OnPropertyChanged(nameof(QueueViewDeckBButtonBackground));
+                OnPropertyChanged(nameof(QueueViewDeckBButtonBorderBrush));
+                OnPropertyChanged(nameof(QueueViewDeckBButtonForeground));
+            }
+        }
+    }
+
+    public string QueueViewDeckHeader => $"{QueueViewDeckName.ToUpperInvariant()} QUEUE";
+
+    public string QueueViewDeckCountDisplay
+    {
+        get
+        {
+            var count = QueueForDeck(QueueViewDeckName).Count;
+            return count == 1 ? "1 song" : $"{count} songs";
+        }
+    }
+
+    public Brush QueueViewDeckBrush => IsQueueViewDeck("Deck B") ? Brush("#1EA7FF") : Brush("#F4B400");
+
+    public Brush QueueViewDeckAButtonBackground => QueueViewButtonBackground("Deck A");
+
+    public Brush QueueViewDeckAButtonBorderBrush => QueueViewButtonBorderBrush("Deck A");
+
+    public Brush QueueViewDeckAButtonForeground => QueueViewButtonForeground("Deck A");
+
+    public Brush QueueViewDeckBButtonBackground => QueueViewButtonBackground("Deck B");
+
+    public Brush QueueViewDeckBButtonBorderBrush => QueueViewButtonBorderBrush("Deck B");
+
+    public Brush QueueViewDeckBButtonForeground => QueueViewButtonForeground("Deck B");
 
     public string CurrentDeckHeader => "DECK A";
 
@@ -460,11 +713,17 @@ public sealed class MainPageViewModel : ObservableObject
             if (SetProperty(ref _isPlaybackPlaying, value))
             {
                 OnPropertyChanged(nameof(PlayPauseLabel));
+                OnPropertyChanged(nameof(DeckAPlayPauseLabel));
+                OnPropertyChanged(nameof(DeckBPlayPauseLabel));
             }
         }
     }
 
     public string PlayPauseLabel => IsPlaybackPlaying ? "PAUSE" : "PLAY";
+
+    public string DeckAPlayPauseLabel => IsDeckPlaying("Deck A") ? "PAUSE" : "PLAY";
+
+    public string DeckBPlayPauseLabel => IsDeckPlaying("Deck B") ? "PAUSE" : "PLAY";
 
     public string SelectedPlaybackMode
     {
@@ -493,10 +752,12 @@ public sealed class MainPageViewModel : ObservableObject
                         ? "Local file mode plays audio files from this Windows PC."
                     : $"Playback mode: {normalizedPlaybackMode}";
 
-                if (normalizedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
+                if (normalizedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture && !_isRestoringSessionState)
                 {
                     _ = LoadLocalMusicAsync();
                 }
+
+                QueueSessionStateSave();
             }
             else if (wasUnsupportedMode)
             {
@@ -541,13 +802,14 @@ public sealed class MainPageViewModel : ObservableObject
         set => SetProperty(ref _autoplaySecondsBeforeEnd, Math.Clamp(value, 1, 60));
     }
 
-    public double TransitionSecondsBeforeEnd
+    public double TransitionOverlapSeconds
     {
-        get => _transitionSecondsBeforeEnd;
+        get => _transitionOverlapSeconds;
         set
         {
-            if (SetProperty(ref _transitionSecondsBeforeEnd, Math.Clamp(value, 1, 45)))
+            if (SetProperty(ref _transitionOverlapSeconds, Math.Clamp(value, 0, 30)))
             {
+                OnPropertyChanged(nameof(TransitionOverlapDisplay));
                 OnPropertyChanged(nameof(TransitionSecondsDisplay));
                 OnPropertyChanged(nameof(TransitionBehaviorNotice));
                 _ = SavePlaybackSettingsAsync();
@@ -555,7 +817,15 @@ public sealed class MainPageViewModel : ObservableObject
         }
     }
 
-    public string TransitionSecondsDisplay => $"{TransitionSecondsBeforeEnd:N0}s";
+    public string TransitionOverlapDisplay => $"{TransitionOverlapSeconds:N0}s";
+
+    public double TransitionSecondsBeforeEnd
+    {
+        get => TransitionOverlapSeconds;
+        set => TransitionOverlapSeconds = value;
+    }
+
+    public string TransitionSecondsDisplay => TransitionOverlapDisplay;
 
     public double FadeInSeconds
     {
@@ -620,6 +890,21 @@ public sealed class MainPageViewModel : ObservableObject
     }
 
     public string StartTransitionOnFadeStatus => StartTransitionOnFade ? "FADE START" : "TIMER START";
+
+    public bool RemovePlayedQueueItems
+    {
+        get => _removePlayedQueueItems;
+        set
+        {
+            if (SetProperty(ref _removePlayedQueueItems, value))
+            {
+                OnPropertyChanged(nameof(RemovePlayedQueueItemsStatus));
+                _ = SavePlaybackSettingsAsync();
+            }
+        }
+    }
+
+    public string RemovePlayedQueueItemsStatus => RemovePlayedQueueItems ? "REMOVE PLAYED" : "LOOP QUEUE";
 
     public double LowFrequencyGain
     {
@@ -690,14 +975,14 @@ public sealed class MainPageViewModel : ObservableObject
 
     public string TransitionBehaviorNotice => AlwaysFadeSongs
         ? StartTransitionOnFade
-            ? $"Transitions start at fade-out ({FadeOutSecondsDisplay}) and fade in over {FadeInSecondsDisplay}."
-            : $"Transitions use timer ({TransitionSecondsDisplay}) and fade songs in/out."
-        : "Fade automation is off; transitions start on the selected timer.";
+            ? $"Next song starts {TransitionOverlapDisplay} before the end; fade-out begins up to {FadeOutSecondsDisplay} earlier."
+            : $"Next song starts {TransitionOverlapDisplay} before the end without pre-fade automation."
+        : $"Next song starts {TransitionOverlapDisplay} before the end.";
 
     public IReadOnlyList<string> TransitionModeOptions { get; } =
     [
-        TransitionSameDeck,
-        TransitionOppositeDeck
+        TransitionOppositeDeck,
+        TransitionSameDeck
     ];
 
     public string SelectedTransitionMode
@@ -707,7 +992,7 @@ public sealed class MainPageViewModel : ObservableObject
         {
             var normalized = TransitionModeOptions.Contains(value)
                 ? value
-                : TransitionSameDeck;
+                : TransitionOppositeDeck;
             if (SetProperty(ref _selectedTransitionMode, normalized))
             {
                 OnPropertyChanged(nameof(NextDeckHeader));
@@ -717,19 +1002,41 @@ public sealed class MainPageViewModel : ObservableObject
         }
     }
 
-    public double DefaultSpotifyVolume
+    public double DeckAVolume
     {
-        get => _defaultSpotifyVolume;
+        get => _deckAVolume;
         set
         {
-            if (SetProperty(ref _defaultSpotifyVolume, Math.Clamp(value, 0, 100)))
+            if (SetProperty(ref _deckAVolume, Math.Clamp(value, 0, 100)))
             {
-                OnPropertyChanged(nameof(DefaultSpotifyVolumeDisplay));
+                OnDeckVolumeChanged("Deck A", nameof(DeckAVolumeDisplay));
             }
         }
     }
 
-    public string DefaultSpotifyVolumeDisplay => $"{DefaultSpotifyVolume:N0}%";
+    public string DeckAVolumeDisplay => FormatVolume(DeckAVolume);
+
+    public double DeckBVolume
+    {
+        get => _deckBVolume;
+        set
+        {
+            if (SetProperty(ref _deckBVolume, Math.Clamp(value, 0, 100)))
+            {
+                OnDeckVolumeChanged("Deck B", nameof(DeckBVolumeDisplay));
+            }
+        }
+    }
+
+    public string DeckBVolumeDisplay => FormatVolume(DeckBVolume);
+
+    public double DefaultSpotifyVolume
+    {
+        get => ResolveDeckVolume(ActiveDeckName);
+        set => SetDeckVolume(ActiveDeckName, value);
+    }
+
+    public string DefaultSpotifyVolumeDisplay => FormatVolume(DefaultSpotifyVolume);
 
     public double SeekPositionSeconds
     {
@@ -764,7 +1071,10 @@ public sealed class MainPageViewModel : ObservableObject
     }
 
     public Task CommitVolumeChangeAsync() =>
-        SetSpotifyVolumeCommand.ExecuteAsync(null);
+        CommitDeckVolumeChangeAsync(ActiveDeckName);
+
+    public Task CommitDeckVolumeChangeAsync(string deckName) =>
+        SetDeckOutputVolumeAsync(deckName);
 
     public string CurrentOutputStatus
     {
@@ -838,7 +1148,7 @@ public sealed class MainPageViewModel : ObservableObject
         private set => SetProperty(ref _nextUpArtist, value);
     }
 
-    public string SpotifyTransitionNotice => "Spotify transitions are controlled by Spotify settings. DancePilot can choose next track but does not mix Spotify audio.";
+    public string SpotifyTransitionNotice => "Deck A/B plan Spotify Connect handoffs. DancePilot controls one Spotify output at a time and does not mix two Spotify streams.";
 
     public string EventName => "Saturday Night Dance";
 
@@ -860,6 +1170,8 @@ public sealed class MainPageViewModel : ObservableObject
 
     public IReadOnlyList<SongRecommendation> Recommendations { get; } = [];
 
+    public Visibility RecommendationsVisibility => Recommendations.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
     public ObservableCollection<SpotifyPlaylistSummary> SpotifyPlaylists { get; } = [];
 
     public ObservableCollection<SpotifyTrackMetadata> SpotifyPreviewTracks { get; } = [];
@@ -874,6 +1186,8 @@ public sealed class MainPageViewModel : ObservableObject
 
     public ObservableCollection<LocalMusicTrack> LocalMusicTracks { get; } = [];
 
+    public ObservableCollection<LocalMusicPlaylist> LocalMusicPlaylists { get; } = [];
+
     public ObservableCollection<DancePilotQueueItem> DancePilotQueue { get; } = [];
 
     public ObservableCollection<DancePilotQueueItem> DeckAQueueItems { get; } = [];
@@ -881,6 +1195,8 @@ public sealed class MainPageViewModel : ObservableObject
     public ObservableCollection<DancePilotQueueItem> DeckBQueueItems { get; } = [];
 
     public ObservableCollection<DancePilotQueueItem> ActiveDeckQueue { get; } = [];
+
+    public ObservableCollection<DancePilotQueueItem> QueueViewDeckQueue { get; } = [];
 
     public IReadOnlyList<string> PlaybackModeOptions { get; } =
     [
@@ -951,17 +1267,37 @@ public sealed class MainPageViewModel : ObservableObject
 
     public IAsyncRelayCommand PlaySelectedLocalMusicCommand { get; }
 
+    public IAsyncRelayCommand LoadLocalPlaylistsCommand { get; }
+
+    public IAsyncRelayCommand AddFilteredLocalMusicToPlaylistCommand { get; }
+
+    public IAsyncRelayCommand QueueSelectedLocalPlaylistToDeckACommand { get; }
+
+    public IAsyncRelayCommand QueueSelectedLocalPlaylistToDeckBCommand { get; }
+
+    public IAsyncRelayCommand DeleteSelectedLocalPlaylistCommand { get; }
+
     public IRelayCommand PauseLocalMusicCommand { get; }
 
     public IAsyncRelayCommand TogglePlaybackCommand { get; }
+
+    public IAsyncRelayCommand PlayPauseDeckACommand { get; }
+
+    public IAsyncRelayCommand PlayPauseDeckBCommand { get; }
 
     public IRelayCommand SelectDeckACommand { get; }
 
     public IRelayCommand SelectDeckBCommand { get; }
 
+    public IRelayCommand ShowDeckAQueueCommand { get; }
+
+    public IRelayCommand ShowDeckBQueueCommand { get; }
+
     public IAsyncRelayCommand AddSelectedSourceToDeckACommand { get; }
 
     public IAsyncRelayCommand AddSelectedSourceToDeckBCommand { get; }
+
+    public IAsyncRelayCommand AddLoadedPlaylistToActiveDeckCommand { get; }
 
     public IAsyncRelayCommand RandomizePlaylistToDeckACommand { get; }
 
@@ -971,9 +1307,9 @@ public sealed class MainPageViewModel : ObservableObject
 
     public IRelayCommand ClearDeckBQueueCommand { get; }
 
-    public ObservableCollection<WaveBar> CurrentWaveform { get; } = CreateWaveform();
+    public ObservableCollection<WaveBar> CurrentWaveform { get; } = CreateWaveform("Deck A");
 
-    public ObservableCollection<WaveBar> NextWaveform { get; } = CreateWaveform();
+    public ObservableCollection<WaveBar> NextWaveform { get; } = CreateWaveform("Deck B");
 
     public ObservableCollection<FrequencyBand> FrequencyAnalyzer { get; } = CreateFrequencyBands();
 
@@ -1015,21 +1351,18 @@ public sealed class MainPageViewModel : ObservableObject
         new RemoteAction("Skip / Next", "\uE8AD", Brush("#303743"))
     ];
 
-    private static ObservableCollection<WaveBar> CreateWaveform()
+    private static ObservableCollection<WaveBar> CreateWaveform(string deckName)
     {
-        double[] heights =
-        [
-            18, 36, 28, 46, 22, 52, 34, 61, 26, 44, 32, 57, 20, 49, 36, 67, 29, 54, 22, 48,
-            42, 74, 34, 55, 25, 47, 32, 62, 36, 53, 21, 41, 30, 58, 44, 70, 24, 52, 34, 60,
-            28, 49, 39, 64, 30, 56, 22, 43, 35, 51, 26, 46, 33, 59, 41, 68, 25, 50, 32, 44
-        ];
-
         var bars = new ObservableCollection<WaveBar>();
-        for (var index = 0; index < heights.Length; index++)
+        for (var index = 0; index < DeckWaveformBarCount; index++)
         {
-            var energy = Math.Clamp((heights[index] - 8) / 68d, 0, 1);
-            var bandPosition = index / Math.Max(1d, heights.Length - 1d);
-            bars.Add(new WaveBar(heights[index], WaveformBrush(bandPosition, energy, bandPosition > 0.72 ? energy : 0, active: false)));
+            var bandPosition = index / Math.Max(1d, DeckWaveformBarCount - 1d);
+            var lowWeight = Math.Max(0, 1 - bandPosition * 1.55);
+            var midWeight = Math.Max(0, 1 - Math.Abs(bandPosition - 0.48) * 1.9);
+            var highWeight = Math.Pow(bandPosition, 1.45);
+            var motion = (Math.Sin(index * 0.47) + 1) * 0.5;
+            var energy = Math.Clamp((lowWeight * 0.32) + (midWeight * 0.24) + (highWeight * 0.18) + (motion * 0.22), 0, 1);
+            bars.Add(CreateDeckWaveBar(deckName, bandPosition, energy * 0.36, active: false, queued: true));
         }
 
         return bars;
@@ -1038,13 +1371,9 @@ public sealed class MainPageViewModel : ObservableObject
     private static ObservableCollection<FrequencyBand> CreateFrequencyBands()
     {
         var bands = new ObservableCollection<FrequencyBand>();
-        string[] labels = ["SUB", "BASS", "LOW", "MID", "HIGH", "PRES", "AIR"];
-        string[] ranges = ["30", "80", "160", "400", "1K", "4K", "10K"];
-        string[] colors = ["#F25D4D", "#F4B400", "#32E76A", "#1EA7FF", "#B875FF", "#FF7AB6", "#8EE6FF"];
-
-        for (var index = 0; index < labels.Length; index++)
+        for (var index = 0; index < FrequencyAnalyzerBandCount; index++)
         {
-            bands.Add(new FrequencyBand(labels[index], ranges[index], 12, Brush(colors[index])));
+            bands.Add(CreateFrequencyBand(index, FrequencyAnalyzerBandCount, 0.08, 0.08, 0.12));
         }
 
         return bands;
@@ -1053,42 +1382,219 @@ public sealed class MainPageViewModel : ObservableObject
     private void UpdateDeckAnalyzers()
     {
         _analyzerFrame++;
-        var deckASeed = ResolveDeckDisplayItem("Deck A")?.Id ?? _playingDeckQueueItemId ?? 0;
-        var deckBSeed = ResolveDeckDisplayItem("Deck B")?.Id ?? FindTransitionTarget()?.Id ?? 0;
-        UpdateAnalyzer(CurrentWaveform, IsDeckPlaying("Deck A"), _analyzerFrame, deckASeed);
-        UpdateAnalyzer(NextWaveform, IsDeckPlaying("Deck B"), _analyzerFrame + 11, deckBSeed);
-        UpdateFrequencyAnalyzer(IsPlaybackPlaying, _analyzerFrame, _playingDeckQueueItemId ?? deckASeed);
+        var deckADisplayItem = ResolveDeckDisplayItem("Deck A");
+        var deckBDisplayItem = ResolveDeckDisplayItem("Deck B");
+        var deckASeed = deckADisplayItem?.Id ?? _playingDeckQueueItemId ?? 0;
+        var deckBSeed = deckBDisplayItem?.Id ?? FindTransitionTarget()?.Id ?? 0;
+        var liveSnapshot = TryAnalyzeSystemOutput();
+        var snapshot = liveSnapshot ?? TryAnalyzeLocalPlayback();
+        var activeAnalyzerDeckName = NormalizeDeckName(_playingDeckQueueItemId is null ? ActiveDeckName : _playingDeckName);
+        if (snapshot is not null)
+        {
+            AppendDjWaveformFrame(activeAnalyzerDeckName, snapshot);
+        }
+
+        if (snapshot is not null && (IsDeckPlaying("Deck A") || (liveSnapshot is not null && activeAnalyzerDeckName == "Deck A")))
+        {
+            UpdateLiveDeckAnalyzer(CurrentWaveform, snapshot, "Deck A");
+        }
+        else
+        {
+            UpdateIdleAnalyzer(CurrentWaveform, deckASeed, "Deck A", deckADisplayItem is not null);
+        }
+
+        if (snapshot is not null && (IsDeckPlaying("Deck B") || (liveSnapshot is not null && activeAnalyzerDeckName == "Deck B")))
+        {
+            UpdateLiveDeckAnalyzer(NextWaveform, snapshot, "Deck B");
+        }
+        else
+        {
+            UpdateIdleAnalyzer(NextWaveform, deckBSeed, "Deck B", deckBDisplayItem is not null);
+        }
+
+        UpdateFrequencyAnalyzer(snapshot, activeAnalyzerDeckName, deckASeed, deckBSeed);
     }
 
-    private void UpdateAnalyzer(ObservableCollection<WaveBar> bars, bool active, int phase, int seed)
+    private LocalAudioSpectrumSnapshot? TryAnalyzeSystemOutput() =>
+        _systemAudioOutputAnalysisService.Analyze(waveformBarCount: DeckWaveformBarCount);
+
+    private void AppendDjWaveformFrame(string deckName, LocalAudioSpectrumSnapshot snapshot)
     {
-        const int count = 60;
-        var seedPhase = (seed % 29) * 0.17;
-        var lowGain = Math.Clamp(1 + (LowFrequencyGain / 12d) * 0.42, 0.45, 1.65);
-        var midGain = Math.Clamp(1 + (MidFrequencyGain / 12d) * 0.36, 0.50, 1.55);
-        var highGain = Math.Clamp(1 + (HighFrequencyGain / 12d) * 0.48, 0.40, 1.75);
+        var history = WaveformHistoryForDeck(deckName);
+        history.Add(new DjWaveformFrame(
+            Low: Math.Clamp(snapshot.Low, 0, 1),
+            Mid: Math.Clamp(snapshot.Mid, 0, 1),
+            High: Math.Clamp(snapshot.High, 0, 1),
+            Beat: Math.Clamp(snapshot.BeatPulse, 0, 1)));
+
+        while (history.Count > DeckWaveformBarCount)
+        {
+            history.RemoveAt(0);
+        }
+    }
+
+    private List<DjWaveformFrame> WaveformHistoryForDeck(string deckName) =>
+        NormalizeDeckName(deckName) == "Deck B" ? _deckBWaveformHistory : _deckAWaveformHistory;
+
+    private LocalAudioSpectrumSnapshot? TryAnalyzeLocalPlayback()
+    {
+        if (SelectedPlaybackMode != SpotifyPlaybackModes.LocalFilesFuture || !IsPlaybackPlaying)
+        {
+            return null;
+        }
+
+        var filePath = SelectedLocalMusicTrack?.FilePath;
+        if (string.IsNullOrWhiteSpace(filePath) && _playingDeckQueueItemId is not null)
+        {
+            filePath = ResolvePlayingDeckItem(_playingDeckName)?.ExternalUri;
+        }
+
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+        {
+            return null;
+        }
+
+        return _localAudioAnalysisService.Analyze(filePath, _localMediaPlayer.PlaybackSession.Position, waveformBarCount: DeckWaveformBarCount);
+    }
+
+    private void UpdateLiveDeckAnalyzer(ObservableCollection<WaveBar> bars, LocalAudioSpectrumSnapshot snapshot, string deckName)
+    {
+        const int count = DeckWaveformBarCount;
         bars.Clear();
         for (var index = 0; index < count; index++)
         {
             var band = index / (count - 1d);
-            var idleShape = 8 + Math.Abs(Math.Sin((index * 0.42) + seedPhase)) * 11;
-            var lowWeight = Math.Max(0, 1 - band * 1.45);
-            var midWeight = Math.Max(0, 1 - Math.Abs(band - 0.48) * 1.8);
-            var highWeight = Math.Pow(band, 1.35);
-            var bass = Math.Pow(Math.Max(0, Math.Sin((phase * 0.34) + seedPhase)), 2) * lowWeight * 48 * lowGain;
-            var mid = Math.Pow(Math.Max(0, Math.Sin((phase * 0.21) + (index * 0.31) + seedPhase)), 2)
-                * midWeight
-                * 34
-                * midGain;
-            var high = (0.5 + Math.Sin((phase * 0.63) + (index * 0.83) + seedPhase) * 0.5) * highWeight * 24 * highGain;
-            var baseHeight = active
-                ? 10 + bass + mid + high
-                : idleShape + (lowWeight * 3 * lowGain) + (midWeight * 2 * midGain) + (highWeight * 4 * highGain);
-            var height = Math.Clamp(baseHeight, 8, 76);
-            var energy = Math.Clamp((height - 8) / 68d, 0, 1);
-            var highPresence = Math.Clamp(high / 24d, 0, 1);
-            bars.Add(new WaveBar(height, WaveformBrush(band, energy, highPresence, active)));
+            var raw = ReadLevel(snapshot.Bands, index, count);
+            var lowWeight = Math.Max(0, 1 - band * 1.50);
+            var midWeight = Math.Max(0, 1 - Math.Abs(band - 0.47) * 1.75);
+            var highWeight = Math.Pow(band, 1.45);
+            var beatLift = snapshot.BeatPulse * (lowWeight * 0.28 + midWeight * 0.11 + highWeight * 0.04);
+            var curve = 0.56 + (lowWeight * 0.20) + (midWeight * 0.12) - (highWeight * 0.10);
+            var level = Math.Clamp((raw * curve + beatLift) * GainForWaveBand(band), 0.04, 1);
+            bars.Add(CreateDeckWaveBar(deckName, band, level, active: true, queued: true));
         }
+    }
+
+    private static DjWaveformFrame ReadDjWaveformFrame(IReadOnlyList<DjWaveformFrame> history, int index, int targetCount)
+    {
+        if (history.Count == 0)
+        {
+            return new DjWaveformFrame(0, 0, 0, 0);
+        }
+
+        var historyOffset = history.Count - targetCount;
+        var sourceIndex = historyOffset + index;
+        if (sourceIndex < 0)
+        {
+            return new DjWaveformFrame(0, 0, 0, 0);
+        }
+
+        return history[Math.Clamp(sourceIndex, 0, history.Count - 1)];
+    }
+
+    private static SolidColorBrush DjWaveformBlend(double low, double mid, double high, double beat, bool active)
+    {
+        var lowColor = ParseColor("#FF3B30");
+        var midColor = ParseColor("#39E75F");
+        var highColor = ParseColor("#28A8FF");
+        var total = Math.Max(0.001, low + mid + high);
+        var r = (lowColor.R * low + midColor.R * mid + highColor.R * high) / total;
+        var g = (lowColor.G * low + midColor.G * mid + highColor.G * high) / total;
+        var b = (lowColor.B * low + midColor.B * mid + highColor.B * high) / total;
+        var color = ColorHelper.FromArgb(255, Convert.ToByte(r), Convert.ToByte(g), Convert.ToByte(b));
+        var brightness = active ? 0.54 + Math.Clamp(total / 3d + beat * 0.25, 0, 0.72) : 0.38;
+        color = ScaleBrightness(color, brightness);
+        if (high > 0.62)
+        {
+            color = Blend(color, ParseColor("#FFFFFF"), Math.Clamp((high - 0.62) * 0.34, 0, 0.20));
+        }
+
+        return Brush(color);
+    }
+
+    private void UpdateIdleAnalyzer(ObservableCollection<WaveBar> bars, int seed, string deckName, bool queued)
+    {
+        const int count = DeckWaveformBarCount;
+        var seedPhase = (seed % 97) * 0.071;
+        bars.Clear();
+        for (var index = 0; index < count; index++)
+        {
+            var band = index / (count - 1d);
+            var lowWeight = Math.Max(0, 1 - band * 1.62);
+            var midWeight = Math.Max(0, 1 - Math.Abs(band - 0.46) * 1.85);
+            var highWeight = Math.Pow(band, 1.50);
+            var bass = (Math.Sin((_analyzerFrame * 0.045) + (index * 0.17) + seedPhase) + 1) * 0.5;
+            var mid = (Math.Sin((_analyzerFrame * 0.085) + (index * 0.31) + seedPhase * 1.7) + 1) * 0.5;
+            var high = (Math.Sin((_analyzerFrame * 0.145) + (index * 0.57) + seedPhase * 2.3) + 1) * 0.5;
+            var shaped = lowWeight * (0.52 + bass * 0.48)
+                + midWeight * (0.26 + mid * 0.48)
+                + highWeight * (0.08 + high * 0.24);
+            var level = queued
+                ? Math.Clamp(0.045 + shaped * 0.22, 0.035, 0.30)
+                : Math.Clamp(0.025 + shaped * 0.045, 0.02, 0.08);
+            bars.Add(CreateDeckWaveBar(deckName, band, level, active: false, queued));
+        }
+    }
+
+    private static WaveBar CreateDeckWaveBar(string deckName, double band, double level, bool active, bool queued)
+    {
+        var clampedLevel = Math.Clamp(level, 0, 1);
+        var upperMotion = 0.86 + Math.Sin(band * Math.PI * 6.0) * 0.10;
+        var lowerMotion = 0.68 + Math.Cos((band * Math.PI * 5.0) + 0.4) * 0.12;
+        var floor = queued ? 1.6 : 0.8;
+        var upperHeight = Math.Clamp(DeckAnalyzerHalfHeight * clampedLevel * upperMotion, floor, DeckAnalyzerHalfHeight);
+        var lowerHeight = Math.Clamp(DeckAnalyzerHalfHeight * clampedLevel * lowerMotion, floor, DeckAnalyzerHalfHeight);
+        var height = Math.Max(upperHeight, lowerHeight);
+        var peakHeight = Math.Clamp(height + (active ? 4.5 : 2.5), floor, DeckAnalyzerHalfHeight);
+        var fill = DeckAnalyzerBrush(deckName, band, clampedLevel, active, queued);
+        var lowerFill = Brush(ScaleBrightness(fill.Color, active ? 0.84 : 0.72));
+        var peakFill = DeckAnalyzerPeakBrush(deckName, clampedLevel, active, queued);
+        return new WaveBar(height, fill)
+        {
+            UpperHeight = upperHeight,
+            LowerHeight = lowerHeight,
+            UpperFill = fill,
+            LowerFill = lowerFill,
+            PeakHeight = peakHeight,
+            PeakFill = peakFill
+        };
+    }
+
+    private static SolidColorBrush DeckAnalyzerBrush(string deckName, double band, double level, bool active, bool queued)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        var deckAccent = normalizedDeckName == "Deck B"
+            ? ParseColor("#1EA7FF")
+            : ParseColor("#F4B400");
+        var lowHeat = ParseColor("#E74A36");
+        var midEnergy = ParseColor("#39D96A");
+        var air = normalizedDeckName == "Deck B" ? ParseColor("#8EE6FF") : ParseColor("#FFD35A");
+        var color = band switch
+        {
+            < 0.16 => Blend(deckAccent, lowHeat, Math.Clamp(level * 0.42, 0, 0.34)),
+            < 0.58 => Blend(deckAccent, midEnergy, Math.Clamp(0.12 + level * 0.36, 0, 0.42)),
+            _ => Blend(deckAccent, air, Math.Clamp(0.10 + level * 0.28, 0, 0.36))
+        };
+
+        var brightness = active
+            ? 0.54 + level * 0.78
+            : queued ? 0.30 + level * 0.58 : 0.18;
+        color = ScaleBrightness(color, Math.Clamp(brightness, 0.16, 1.34));
+        if (!queued)
+        {
+            color = Blend(color, ParseColor("#43505B"), 0.55);
+        }
+
+        return Brush(color);
+    }
+
+    private static SolidColorBrush DeckAnalyzerPeakBrush(string deckName, double level, bool active, bool queued)
+    {
+        var accent = NormalizeDeckName(deckName) == "Deck B"
+            ? ParseColor("#8EE6FF")
+            : ParseColor("#FFD35A");
+        var brightness = active ? 0.56 + level * 0.72 : queued ? 0.32 + level * 0.38 : 0.20;
+        return Brush(ScaleBrightness(accent, Math.Clamp(brightness, 0.18, 1.15)));
     }
 
     private static SolidColorBrush WaveformBrush(double bandPosition, double energy, double highPresence, bool active)
@@ -1126,30 +1632,154 @@ public sealed class MainPageViewModel : ObservableObject
         return Brush(color);
     }
 
-    private void UpdateFrequencyAnalyzer(bool active, int phase, int seed)
+    private void UpdateFrequencyAnalyzer(
+        LocalAudioSpectrumSnapshot? snapshot,
+        string activeAnalyzerDeckName,
+        int deckASeed,
+        int deckBSeed)
     {
-        string[] labels = ["SUB", "BASS", "LOW", "MID", "HIGH", "PRES", "AIR"];
-        string[] ranges = ["30", "80", "160", "400", "1K", "4K", "10K"];
-        string[] colors = ["#F25D4D", "#F4B400", "#32E76A", "#1EA7FF", "#B875FF", "#FF7AB6", "#8EE6FF"];
-        var seedPhase = (seed % 17) * 0.23;
-
         FrequencyAnalyzer.Clear();
-        for (var index = 0; index < labels.Length; index++)
+        for (var index = 0; index < FrequencyAnalyzerBandCount; index++)
         {
-            var bandWeight = index / Math.Max(1d, labels.Length - 1d);
-            var lowGain = index <= 2 ? LowFrequencyGain / 12d : 0;
-            var midGain = index == 3 ? MidFrequencyGain / 12d : 0;
-            var highGain = index >= 4 ? HighFrequencyGain / 12d : 0;
-            var gain = 1 + (lowGain + midGain + highGain) * 0.35;
-            var bassPulse = Math.Pow(Math.Max(0, Math.Sin((phase * 0.28) + seedPhase)), 2) * Math.Max(0, 1 - bandWeight);
-            var sweepPulse = Math.Pow(Math.Max(0, Math.Sin((phase * (0.12 + bandWeight * 0.34)) + seedPhase + index)), 2);
-            var sparklePulse = (0.5 + Math.Sin((phase * 0.61) + (index * 0.91) + seedPhase) * 0.5) * bandWeight;
-            var idlePulse = Math.Abs(Math.Sin((phase * 0.08) + index + seedPhase));
-            var activeLevel = 10 + bassPulse * 34 + sweepPulse * 26 + sparklePulse * 18;
-            var idleLevel = 7 + idlePulse * (10 + bandWeight * 6) + sweepPulse * 8;
-            var level = (active ? activeLevel : idleLevel) * Math.Clamp(gain, 0.45, 1.55);
-            FrequencyAnalyzer.Add(new FrequencyBand(labels[index], ranges[index], Math.Clamp(level, 6, 38), Brush(colors[index])));
+            var deckALevel = CreateDeckAnalyzerLevel(index, FrequencyAnalyzerBandCount, "Deck A", activeAnalyzerDeckName, deckASeed, snapshot);
+            var deckBLevel = CreateDeckAnalyzerLevel(index, FrequencyAnalyzerBandCount, "Deck B", activeAnalyzerDeckName, deckBSeed, snapshot);
+            var peakLevel = Math.Clamp(Math.Max(deckALevel, deckBLevel) + 0.08, 0.10, 1);
+            FrequencyAnalyzer.Add(CreateFrequencyBand(index, FrequencyAnalyzerBandCount, deckALevel, deckBLevel, peakLevel));
         }
+    }
+
+    private double CreateDeckAnalyzerLevel(
+        int index,
+        int count,
+        string deckName,
+        string activeAnalyzerDeckName,
+        int seed,
+        LocalAudioSpectrumSnapshot? snapshot)
+    {
+        var band = index / Math.Max(1d, count - 1d);
+        var gain = GainForWaveBand(band);
+        if (snapshot is not null && string.Equals(activeAnalyzerDeckName, NormalizeDeckName(deckName), StringComparison.Ordinal))
+        {
+            var live = ReadLevel(snapshot.Bands, index, count);
+            var beatWeight = band < 0.18 ? 0.26 : band < 0.38 ? 0.16 : 0.05;
+            return Math.Clamp((live + snapshot.BeatPulse * beatWeight) * gain, 0.04, 1);
+        }
+
+        var deckIsPlaying = IsDeckPlaying(deckName);
+        return CreateSimulatedAnalyzerLevel(index, count, seed, deckIsPlaying, gain);
+    }
+
+    private double CreateSimulatedAnalyzerLevel(int index, int count, int seed, bool active, double gain)
+    {
+        var band = index / Math.Max(1d, count - 1d);
+        var seedPhase = (seed % 97) * 0.071;
+        var frame = _analyzerFrame;
+        var lowWeight = Math.Max(0, 1 - band * 1.62);
+        var midWeight = Math.Max(0, 1 - Math.Abs(band - 0.45) * 1.85);
+        var highWeight = Math.Pow(band, 1.35);
+        var slowBass = (Math.Sin((frame * 0.055) + (index * 0.21) + seedPhase) + 1) * 0.5;
+        var midMotion = (Math.Sin((frame * 0.095) + (index * 0.39) + seedPhase * 1.7) + 1) * 0.5;
+        var highMotion = (Math.Sin((frame * 0.17) + (index * 0.73) + seedPhase * 2.3) + 1) * 0.5;
+        var shaped = (lowWeight * (0.42 + slowBass * 0.58))
+            + (midWeight * (0.24 + midMotion * 0.48))
+            + (highWeight * (0.10 + highMotion * 0.28));
+        var scale = active ? 0.58 : 0.18;
+        var floor = active ? 0.08 : 0.035;
+        return Math.Clamp((floor + shaped * scale) * gain, 0.035, active ? 0.92 : 0.30);
+    }
+
+    private static FrequencyBand CreateFrequencyBand(
+        int index,
+        int count,
+        double deckALevel,
+        double deckBLevel,
+        double peakLevel)
+    {
+        var band = index / Math.Max(1d, count - 1d);
+        var label = FrequencyLabelForBand(band);
+        var range = FrequencyRangeForBand(band);
+        var deckAColor = ScaleBrightness(ParseColor("#F4B400"), 0.42 + deckALevel * 0.86);
+        var deckBColor = ScaleBrightness(ParseColor("#1EA7FF"), 0.40 + deckBLevel * 0.82);
+        if (deckALevel > 0.78)
+        {
+            deckAColor = Blend(deckAColor, ParseColor("#FFEE88"), Math.Clamp((deckALevel - 0.78) * 0.65, 0, 0.18));
+        }
+
+        if (deckBLevel > 0.78)
+        {
+            deckBColor = Blend(deckBColor, ParseColor("#9BE8FF"), Math.Clamp((deckBLevel - 0.78) * 0.65, 0, 0.18));
+        }
+
+        return new FrequencyBand(
+            label,
+            range,
+            Math.Clamp(4 + deckALevel * 42, 3, 46),
+            Math.Clamp(4 + deckBLevel * 42, 3, 46),
+            Math.Clamp(2 + peakLevel * 42, 3, 46),
+            Brush(deckAColor),
+            Brush(deckBColor),
+            Brush(ScaleBrightness(ParseColor("#8FA4B8"), 0.26 + peakLevel * 0.32)),
+            Brush("#1A242E"));
+    }
+
+    private static string FrequencyLabelForBand(double band) =>
+        band switch
+        {
+            < 0.08 => "SUB",
+            < 0.20 => "BASS",
+            < 0.33 => "LOW",
+            < 0.54 => "MID",
+            < 0.72 => "HIGH",
+            < 0.88 => "PRES",
+            _ => "AIR"
+        };
+
+    private static string FrequencyRangeForBand(double band) =>
+        band switch
+        {
+            < 0.08 => "30-60",
+            < 0.20 => "60-120",
+            < 0.33 => "120-250",
+            < 0.54 => "250-750",
+            < 0.72 => "750-2K",
+            < 0.88 => "2K-6K",
+            _ => "6K-12K"
+        };
+
+    private double GainForWaveBand(double bandPosition)
+    {
+        var lowWeight = Math.Max(0, 1 - bandPosition * 1.45);
+        var midWeight = Math.Max(0, 1 - Math.Abs(bandPosition - 0.48) * 1.8);
+        var highWeight = Math.Pow(bandPosition, 1.35);
+        var total = Math.Max(0.001, lowWeight + midWeight + highWeight);
+        return ((lowWeight * GainForFrequencyBand(1))
+            + (midWeight * GainForFrequencyBand(3))
+            + (highWeight * GainForFrequencyBand(5))) / total;
+    }
+
+    private double GainForFrequencyBand(int bandIndex)
+    {
+        var gainDb = bandIndex switch
+        {
+            <= 2 => LowFrequencyGain,
+            3 => MidFrequencyGain,
+            _ => HighFrequencyGain
+        };
+        return Math.Clamp(Math.Pow(10, gainDb / 24d), 0.35, 1.85);
+    }
+
+    private static double ReadLevel(IReadOnlyList<double> levels, int index, int targetCount)
+    {
+        if (levels.Count == 0)
+        {
+            return 0;
+        }
+
+        var sourceIndex = Math.Clamp(
+            Convert.ToInt32(Math.Round(index * (levels.Count - 1d) / Math.Max(1, targetCount - 1d))),
+            0,
+            levels.Count - 1);
+        return Math.Clamp(levels[sourceIndex], 0, 1);
     }
 
     private static SolidColorBrush Brush(string hex)
@@ -1161,6 +1791,31 @@ public sealed class MainPageViewModel : ObservableObject
     {
         return new SolidColorBrush(color);
     }
+
+    private bool IsQueueViewDeck(string deckName) =>
+        string.Equals(QueueViewDeckName, NormalizeDeckName(deckName), StringComparison.Ordinal);
+
+    private Brush QueueViewButtonBackground(string deckName)
+    {
+        if (!IsQueueViewDeck(deckName))
+        {
+            return Brush("#141C25");
+        }
+
+        return NormalizeDeckName(deckName) == "Deck B"
+            ? Brush("#08253A")
+            : Brush("#342706");
+    }
+
+    private Brush QueueViewButtonBorderBrush(string deckName) =>
+        IsQueueViewDeck(deckName)
+            ? NormalizeDeckName(deckName) == "Deck B" ? Brush("#1EA7FF") : Brush("#F4B400")
+            : Brush("#293642");
+
+    private Brush QueueViewButtonForeground(string deckName) =>
+        IsQueueViewDeck(deckName)
+            ? NormalizeDeckName(deckName) == "Deck B" ? Brush("#8EE6FF") : Brush("#FFD35A")
+            : Brush("#F5F8FA");
 
     private static Windows.UI.Color ParseColor(string hex)
     {
@@ -1195,6 +1850,58 @@ public sealed class MainPageViewModel : ObservableObject
     private static string FormatGain(double value) =>
         $"{(value > 0 ? "+" : string.Empty)}{value:N0} dB";
 
+    private static string FormatVolume(double value) =>
+        $"{value:N0}%";
+
+    private void OnDeckVolumeChanged(string deckName, string displayPropertyName)
+    {
+        _defaultSpotifyVolume = ResolveDeckVolume(ActiveDeckName);
+        OnPropertyChanged(displayPropertyName);
+        OnPropertyChanged(nameof(DefaultSpotifyVolume));
+        OnPropertyChanged(nameof(DefaultSpotifyVolumeDisplay));
+        ApplyLocalVolumeIfDeckIsLive(deckName);
+        _ = SavePlaybackSettingsAsync();
+    }
+
+    private void SetDeckVolume(string deckName, double volume)
+    {
+        if (NormalizeDeckName(deckName) == "Deck B")
+        {
+            DeckBVolume = volume;
+        }
+        else
+        {
+            DeckAVolume = volume;
+        }
+    }
+
+    private double ResolveDeckVolume(string deckName) =>
+        NormalizeDeckName(deckName) == "Deck B" ? DeckBVolume : DeckAVolume;
+
+    private int ResolveDeckVolumePercent(string deckName) =>
+        Math.Clamp(Convert.ToInt32(ResolveDeckVolume(deckName)), 0, 100);
+
+    private double ResolveDeckVolumeScalar(string deckName) =>
+        Math.Clamp(ResolveDeckVolume(deckName) / 100d, 0, 1);
+
+    private bool ShouldApplyVolumeToLiveOutput(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        return IsDeckPlaying(normalizedDeckName)
+            || (_playingDeckQueueItemId is null
+                && string.Equals(ActiveDeckName, normalizedDeckName, StringComparison.Ordinal));
+    }
+
+    private void ApplyLocalVolumeIfDeckIsLive(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture
+            && ShouldApplyVolumeToLiveOutput(normalizedDeckName))
+        {
+            _localMediaPlayer.Volume = ResolveDeckVolumeScalar(normalizedDeckName);
+        }
+    }
+
     private async Task InitializeAsync(SqliteConnectionFactory connectionFactory)
     {
         try
@@ -1207,8 +1914,10 @@ public sealed class MainPageViewModel : ObservableObject
 
             await new DancePilotDatabaseMigrator(connectionFactory).MigrateAsync();
             await LoadPlaybackSettingsAsync();
+            await RefreshPlaybackCollectionsAsync(loadImportedTracks: false);
+            await LoadLocalPlaylistsCoreAsync();
+            await RestoreSessionStateAsync();
             await RefreshSpotifyConnectionStatusAsync();
-            await RefreshPlaybackCollectionsAsync();
 
             StartupLog.Write("MainPageViewModel async initialization complete");
         }
@@ -1231,19 +1940,22 @@ public sealed class MainPageViewModel : ObservableObject
         SpotifyAutopilotEnabled = settings.AutopilotEnabled;
         AutoplaySecondsBeforeEnd = settings.AutoplaySecondsBeforeEnd;
         DeckTransitionEnabled = settings.DeckTransitionEnabled;
-        TransitionSecondsBeforeEnd = settings.DeckTransitionSecondsBeforeEnd;
+        TransitionOverlapSeconds = settings.DeckTransitionOverlapSeconds;
         SelectedTransitionMode = TransitionModeOptions.Contains(settings.DeckTransitionMode)
             ? settings.DeckTransitionMode
-            : TransitionSameDeck;
-        FadeInSeconds = settings.FadeInSeconds;
-        FadeOutSeconds = settings.FadeOutSeconds;
+            : TransitionOppositeDeck;
+        FadeInSeconds = Math.Max(settings.FadeInSeconds, DefaultSmoothFadeInSeconds);
+        FadeOutSeconds = Math.Max(settings.FadeOutSeconds, DefaultSmoothFadeOutSeconds);
         AlwaysFadeSongs = settings.AlwaysFadeSongs;
         StartTransitionOnFade = settings.StartTransitionOnFade;
+        RemovePlayedQueueItems = settings.RemovePlayedQueueItems;
         LowFrequencyGain = settings.LowFrequencyGain;
         MidFrequencyGain = settings.MidFrequencyGain;
         HighFrequencyGain = settings.HighFrequencyGain;
         CrossfaderPosition = settings.CrossfaderPosition;
-        DefaultSpotifyVolume = settings.DefaultVolume;
+        _defaultSpotifyVolume = Math.Clamp(settings.DefaultVolume, 0, 100);
+        DeckAVolume = settings.DeckAVolume;
+        DeckBVolume = settings.DeckBVolume;
         _selectedOutputDeviceId = settings.SelectedDeviceId;
         SelectedOutputDeviceName = string.IsNullOrWhiteSpace(settings.SelectedDeviceName)
             ? "No Spotify device selected"
@@ -1266,14 +1978,18 @@ public sealed class MainPageViewModel : ObservableObject
         PlaybackMode = SelectedPlaybackMode,
         AutopilotEnabled = SpotifyAutopilotEnabled,
         AutoplaySecondsBeforeEnd = Math.Max(1, Convert.ToInt32(AutoplaySecondsBeforeEnd)),
-        DefaultVolume = Math.Clamp(Convert.ToInt32(DefaultSpotifyVolume), 0, 100),
+        DefaultVolume = Math.Clamp(Convert.ToInt32(_defaultSpotifyVolume), 0, 100),
+        DeckAVolume = Math.Clamp(Convert.ToInt32(DeckAVolume), 0, 100),
+        DeckBVolume = Math.Clamp(Convert.ToInt32(DeckBVolume), 0, 100),
         DeckTransitionEnabled = DeckTransitionEnabled,
-        DeckTransitionSecondsBeforeEnd = Math.Max(1, Convert.ToInt32(TransitionSecondsBeforeEnd)),
+        DeckTransitionSecondsBeforeEnd = Math.Max(0, Convert.ToInt32(TransitionOverlapSeconds)),
+        DeckTransitionOverlapSeconds = Math.Max(0, Convert.ToInt32(TransitionOverlapSeconds)),
         DeckTransitionMode = SelectedTransitionMode,
         FadeInSeconds = Math.Clamp(Convert.ToInt32(FadeInSeconds), 1, 20),
         FadeOutSeconds = Math.Clamp(Convert.ToInt32(FadeOutSeconds), 1, 30),
         AlwaysFadeSongs = AlwaysFadeSongs,
         StartTransitionOnFade = StartTransitionOnFade,
+        RemovePlayedQueueItems = RemovePlayedQueueItems,
         LowFrequencyGain = Math.Clamp(Convert.ToInt32(LowFrequencyGain), -12, 12),
         MidFrequencyGain = Math.Clamp(Convert.ToInt32(MidFrequencyGain), -12, 12),
         HighFrequencyGain = Math.Clamp(Convert.ToInt32(HighFrequencyGain), -12, 12),
@@ -1290,6 +2006,330 @@ public sealed class MainPageViewModel : ObservableObject
 
     private SpotifySettings CurrentSpotifyPlaybackSettings =>
         CurrentSpotifySettings with { IncludePlaybackControlScopes = true };
+
+    private async Task RestoreSessionStateAsync()
+    {
+        var state = await _sessionStateRepository.LoadAsync();
+        if (state is null)
+        {
+            _hasLoadedSessionState = true;
+            return;
+        }
+
+        _isRestoringSessionState = true;
+        try
+        {
+            SpotifySearchQuery = state.SpotifySearchQuery;
+            LocalMusicSearchQuery = state.LocalMusicSearchQuery;
+            if (!string.IsNullOrWhiteSpace(state.LocalMusicFolderPath))
+            {
+                LocalMusicFolderPath = state.LocalMusicFolderPath;
+            }
+
+            SelectedLocalMusicSortOption = LocalMusicSortOptions.Contains(state.LocalMusicSortOption)
+                ? state.LocalMusicSortOption
+                : LocalSortFolder;
+
+            _deckAQueue.Clear();
+            _deckAQueue.AddRange(NormalizeQueueItems(state.DeckAQueue, "Deck A"));
+            _deckBQueue.Clear();
+            _deckBQueue.AddRange(NormalizeQueueItems(state.DeckBQueue, "Deck B"));
+
+            var maxQueueItemId = _deckAQueue
+                .Concat(_deckBQueue)
+                .Select(item => item.Id)
+                .DefaultIfEmpty(0)
+                .Max();
+            _nextDeckQueueItemId = Math.Max(Math.Max(1, state.NextDeckQueueItemId), maxQueueItemId + 1);
+
+            _selectedDeckQueueItemIds["Deck A"] = FindQueueItemId("Deck A", state.SelectedDeckAQueueItemId);
+            _selectedDeckQueueItemIds["Deck B"] = FindQueueItemId("Deck B", state.SelectedDeckBQueueItemId);
+            _lastPlayedDeckQueueItemIds["Deck A"] = FindQueueItemId("Deck A", state.LastPlayedDeckAQueueItemId);
+            _lastPlayedDeckQueueItemIds["Deck B"] = FindQueueItemId("Deck B", state.LastPlayedDeckBQueueItemId);
+            _playingDeckName = NormalizeDeckName(state.PlayingDeckName);
+            _playingDeckQueueItemId = FindQueueItemId(_playingDeckName, state.PlayingDeckQueueItemId);
+
+            _suppressSpotifyPlaylistAutoLoad = true;
+            try
+            {
+                SelectedSpotifyPlaylist = state.SelectedSpotifyPlaylist;
+            }
+            finally
+            {
+                _suppressSpotifyPlaylistAutoLoad = false;
+            }
+
+            ReplaceCollection(SpotifyPreviewTracks, state.SpotifyPreviewTracks);
+            ReplaceCollection(SpotifySearchResults, state.SpotifySearchResults);
+            SelectedSpotifyTrack = FindTrackByKey(SpotifyPreviewTracks, state.SelectedSpotifyTrackKey)
+                ?? SpotifyPreviewTracks.FirstOrDefault();
+            SelectedSpotifySearchTrack = FindTrackByKey(SpotifySearchResults, state.SelectedSpotifySearchTrackKey)
+                ?? SpotifySearchResults.FirstOrDefault();
+
+            if (!string.IsNullOrWhiteSpace(state.SelectedImportedSpotifyPlaylistId))
+            {
+                var importedPlaylist = ImportedSpotifyPlaylists.FirstOrDefault(playlist =>
+                    string.Equals(playlist.SpotifyPlaylistId, state.SelectedImportedSpotifyPlaylistId, StringComparison.OrdinalIgnoreCase));
+                if (importedPlaylist is not null)
+                {
+                    SelectedImportedSpotifyPlaylist = importedPlaylist;
+                }
+            }
+
+            ActiveSource = NormalizeSource(state.ActiveSource);
+            SelectedPlaybackMode = IsSupportedPlaybackMode(NormalizePlaybackMode(state.SelectedPlaybackMode))
+                ? NormalizePlaybackMode(state.SelectedPlaybackMode)
+                : SelectedPlaybackMode;
+            ActiveDeckName = NormalizeDeckName(state.ActiveDeckName);
+            SelectedLocalMusicPlaylist = LocalMusicPlaylists.FirstOrDefault(playlist => playlist.Id == state.SelectedLocalPlaylistId)
+                ?? LocalMusicPlaylists.FirstOrDefault();
+
+            if (ActiveSource == SourceLocal)
+            {
+                LocalLibraryStatus = "Local source restored. Click LOCAL to scan your music folder when ready.";
+            }
+
+            RefreshActiveDeckQueue();
+            RefreshDeckDisplayProperties();
+            UpdateNextUpFromDecks();
+            SpotifyOperationMessage = state.SavedAt == default
+                ? "Restored your last DancePilot session."
+                : $"Restored your last DancePilot session from {state.SavedAt:g}.";
+            StartupLog.Write($"Session restored: deckA={_deckAQueue.Count}; deckB={_deckBQueue.Count}; preview={SpotifyPreviewTracks.Count}; search={SpotifySearchResults.Count}");
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write(ex, "Session restore failed");
+            SpotifyOperationMessage = $"DancePilot could not restore the previous session: {ex.Message}";
+        }
+        finally
+        {
+            _isRestoringSessionState = false;
+            _hasLoadedSessionState = true;
+        }
+    }
+
+    public async Task SaveSessionStateNowAsync()
+    {
+        _sessionStateSaveDebounce?.Cancel();
+        await SaveSessionStateAsync();
+    }
+
+    public async Task ShutdownAsync()
+    {
+        if (_isShuttingDown)
+        {
+            return;
+        }
+
+        _isShuttingDown = true;
+        _playbackTimer.Stop();
+        _analyzerTimer.Stop();
+
+        try
+        {
+            PauseLocalPlaybackForShutdown();
+            await PauseSpotifyPlaybackForShutdownAsync();
+        }
+        finally
+        {
+            await SaveSessionStateNowAsync();
+        }
+    }
+
+    private void PauseLocalPlaybackForShutdown()
+    {
+        try
+        {
+            _localMediaPlayer.Pause();
+            IsPlaybackPlaying = false;
+            if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
+            {
+                SpotifyPlaybackStatus = "Local paused";
+                CurrentOutputStatus = "Local playback paused because DancePilot closed.";
+            }
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write(ex, "Local playback shutdown pause failed");
+        }
+    }
+
+    private async Task PauseSpotifyPlaybackForShutdownAsync()
+    {
+        try
+        {
+            if (!ShouldPauseSpotifyOnShutdown())
+            {
+                return;
+            }
+
+            if (!await _spotifyService.IsConnectedAsync())
+            {
+                return;
+            }
+
+            var missingModifyScopes = await _spotifyService.GetMissingScopesAsync([SpotifyScopes.UserModifyPlaybackState]);
+            if (missingModifyScopes.Count > 0)
+            {
+                StartupLog.Write("Spotify shutdown pause skipped; missing scope(s): " + string.Join(", ", missingModifyScopes));
+                return;
+            }
+
+            var deviceId = SelectedSpotifyDevice?.Id ?? _selectedOutputDeviceId;
+            var missingReadScopes = await _spotifyService.GetMissingScopesAsync([SpotifyScopes.UserReadPlaybackState]);
+            if (missingReadScopes.Count == 0)
+            {
+                var state = await _spotifyPlayerService.GetPlaybackStateAsync(CurrentSpotifySettings);
+                if (state?.IsPlaying != true)
+                {
+                    return;
+                }
+
+                deviceId = state.Device?.Id ?? deviceId;
+            }
+
+            await _spotifyPlayerService.PauseAsync(CurrentSpotifySettings, deviceId ?? string.Empty);
+            SpotifyOperationMessage = "Spotify playback paused because DancePilot closed.";
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write(ex, "Spotify shutdown pause failed");
+        }
+    }
+
+    private bool ShouldPauseSpotifyOnShutdown()
+    {
+        if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
+        {
+            return false;
+        }
+
+        if (IsPlaybackPlaying)
+        {
+            return true;
+        }
+
+        return ResolvePlayingDeckItem(_playingDeckName)?.Source == SongSources.Spotify;
+    }
+
+    private void QueueSessionStateSave()
+    {
+        if (_isRestoringSessionState || !_hasLoadedSessionState)
+        {
+            return;
+        }
+
+        _sessionStateSaveDebounce?.Cancel();
+        var debounce = new CancellationTokenSource();
+        _sessionStateSaveDebounce = debounce;
+        _ = SaveSessionStateDebouncedAsync(debounce.Token);
+    }
+
+    private async Task SaveSessionStateDebouncedAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(400, cancellationToken);
+            await SaveSessionStateAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task SaveSessionStateAsync(CancellationToken cancellationToken = default)
+    {
+        if (_isRestoringSessionState)
+        {
+            return;
+        }
+
+        try
+        {
+            await _sessionStateRepository.SaveAsync(CreateSessionState(), cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write(ex, "Session save failed");
+        }
+    }
+
+    private DancePilotSessionState CreateSessionState() => new()
+    {
+        SavedAt = DateTimeOffset.UtcNow,
+        ActiveSource = ActiveSource,
+        ActiveDeckName = ActiveDeckName,
+        SelectedPlaybackMode = SelectedPlaybackMode,
+        PlayingDeckName = _playingDeckName,
+        PlayingDeckQueueItemId = _playingDeckQueueItemId,
+        SelectedDeckAQueueItemId = _selectedDeckQueueItemIds.GetValueOrDefault("Deck A"),
+        SelectedDeckBQueueItemId = _selectedDeckQueueItemIds.GetValueOrDefault("Deck B"),
+        LastPlayedDeckAQueueItemId = _lastPlayedDeckQueueItemIds.GetValueOrDefault("Deck A"),
+        LastPlayedDeckBQueueItemId = _lastPlayedDeckQueueItemIds.GetValueOrDefault("Deck B"),
+        NextDeckQueueItemId = _nextDeckQueueItemId,
+        DeckAQueue = _deckAQueue.ToList(),
+        DeckBQueue = _deckBQueue.ToList(),
+        SelectedSpotifyPlaylist = SelectedSpotifyPlaylist,
+        SelectedSpotifyTrackKey = TrackKey(SelectedSpotifyTrack),
+        SpotifySearchQuery = SpotifySearchQuery,
+        SelectedSpotifySearchTrackKey = TrackKey(SelectedSpotifySearchTrack),
+        SpotifyPreviewTracks = SpotifyPreviewTracks.ToList(),
+        SpotifySearchResults = SpotifySearchResults.ToList(),
+        SelectedImportedSpotifyPlaylistId = SelectedImportedSpotifyPlaylist?.SpotifyPlaylistId,
+        SelectedImportedSpotifyTrackKey = TrackKey(SelectedImportedSpotifyTrack),
+        LocalMusicSearchQuery = LocalMusicSearchQuery,
+        LocalMusicFolderPath = LocalMusicFolderPath,
+        LocalMusicSortOption = SelectedLocalMusicSortOption,
+        SelectedLocalPlaylistId = SelectedLocalMusicPlaylist?.Id,
+        SelectedLocalFilePath = SelectedLocalMusicTrack?.FilePath
+    };
+
+    private IEnumerable<DancePilotQueueItem> NormalizeQueueItems(IEnumerable<DancePilotQueueItem> items, string deckName)
+    {
+        var position = 1;
+        foreach (var item in items.Where(item => !string.IsNullOrWhiteSpace(item.Title)))
+        {
+            yield return item with
+            {
+                DeckName = NormalizeDeckName(deckName),
+                QueuePosition = position++
+            };
+        }
+    }
+
+    private int? FindQueueItemId(string deckName, int? itemId)
+    {
+        if (itemId is null)
+        {
+            return QueueForDeck(deckName).FirstOrDefault()?.Id;
+        }
+
+        return QueueForDeck(deckName).Any(item => item.Id == itemId.Value)
+            ? itemId.Value
+            : QueueForDeck(deckName).FirstOrDefault()?.Id;
+    }
+
+    private static SpotifyTrackMetadata? FindTrackByKey(IEnumerable<SpotifyTrackMetadata> tracks, string? key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return null;
+        }
+
+        return tracks.FirstOrDefault(track =>
+            string.Equals(TrackKey(track), key, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? TrackKey(SpotifyTrackMetadata? track) =>
+        track is null
+            ? null
+            : !string.IsNullOrWhiteSpace(track.SpotifyUri)
+                ? track.SpotifyUri
+                : track.SpotifyTrackId;
 
     private async Task LoginSpotifyAsync()
     {
@@ -1405,6 +2445,7 @@ public sealed class MainPageViewModel : ObservableObject
             : unavailableCount == 0
                 ? $"Loaded {SpotifyPreviewTracks.Count} track(s) from {SelectedSpotifyPlaylist.Name}."
                 : $"Loaded {SpotifyPreviewTracks.Count} track(s) from {SelectedSpotifyPlaylist.Name}; {unavailableCount} are Spotify-local or unavailable for Spotify API playback.";
+        QueueSessionStateSave();
     }
 
     private void UpdateSelectedPlaylistTrackCount(int trackCount)
@@ -1452,7 +2493,7 @@ public sealed class MainPageViewModel : ObservableObject
             var result = await _spotifyImportRepository.ImportPlaylistAsync(SelectedSpotifyPlaylist, tracks);
             await LoadImportedSpotifyPlaylistsCoreAsync();
             SpotifyOperationMessage =
-                $"Imported {result.ImportedCount}, updated {result.UpdatedCount}, skipped {result.UnavailableCount} unavailable, likely local matches {result.LikelyLocalMatchCount}.";
+                $"Saved locally: {result.ImportedCount} imported, {result.UpdatedCount} updated, {result.UnavailableCount} unavailable skipped, {result.LikelyLocalMatchCount} likely local matches.";
         });
     }
 
@@ -1487,26 +2528,29 @@ public sealed class MainPageViewModel : ObservableObject
 
             SelectedSpotifySearchTrack = SpotifySearchResults.FirstOrDefault();
             SpotifyOperationMessage = $"Found {SpotifySearchResults.Count} Spotify search result(s) for \"{SpotifySearchQuery.Trim()}\".";
+            QueueSessionStateSave();
         });
     }
 
-    private Task PlaySelectedSpotifySearchTrackAsync()
+    private async Task PlaySelectedSpotifySearchTrackAsync()
     {
         if (SelectedSpotifySearchTrack is null)
         {
             SpotifyOperationMessage = "Select a Spotify search result first.";
-            return Task.CompletedTask;
+            return;
         }
 
-        QueueSpotifyTrackToActiveDeck(SelectedSpotifySearchTrack);
-        return Task.CompletedTask;
+        await QueueSpotifyTrackToDeckAsync(SelectedSpotifySearchTrack, ActiveDeckName);
     }
 
-    private async Task PlaySpotifyTrackWithFallbackAsync(SpotifyTrackMetadata track, string successMessage)
+    private async Task<bool> PlaySpotifyTrackWithFallbackAsync(
+        SpotifyTrackMetadata track,
+        string successMessage,
+        bool allowExternalFallback = true)
     {
-        if (await TryExternalHandoffTrackAsync(track))
+        if (allowExternalFallback && await TryExternalHandoffTrackAsync(track))
         {
-            return;
+            return false;
         }
 
         await EnsurePlaybackScopesAsync();
@@ -1517,9 +2561,15 @@ public sealed class MainPageViewModel : ObservableObject
             await _playbackCoordinator.PlayTrackAsync(CurrentSpotifySettings, deviceId, track);
             SpotifyOperationMessage = successMessage;
             await RefreshPlaybackCoreAsync(runAutopilot: false);
+            return true;
         }
         catch (SpotifyApiException ex) when (ex.Kind is SpotifyApiErrorKind.PlaybackForbidden or SpotifyApiErrorKind.NoActiveDevice or SpotifyApiErrorKind.DeviceUnavailable)
         {
+            if (!allowExternalFallback)
+            {
+                throw;
+            }
+
             StartupLog.Write($"Spotify Connect play failed ({ex.Kind}); falling back to Spotify app for {track.Title}. status={ex.StatusCode} uri={ex.RequestUri} body={ex.ErrorBody}");
             if (!await OpenSpotifyTrackLinkAsync(track))
             {
@@ -1528,6 +2578,7 @@ public sealed class MainPageViewModel : ObservableObject
 
             SelectedPlaybackMode = SpotifyPlaybackModes.ExternalSpotifyAppHandoff;
             SpotifyOperationMessage = $"Spotify refused remote control, so DancePilot opened {track.Title} in Spotify. Press Play in Spotify if it does not start automatically.";
+            return false;
         }
     }
 
@@ -1563,17 +2614,16 @@ public sealed class MainPageViewModel : ObservableObject
         });
     }
 
-    private Task PlaySelectedSpotifyTrackAsync()
+    private async Task PlaySelectedSpotifyTrackAsync()
     {
         var track = SelectedImportedSpotifyTrack ?? SelectedSpotifyTrack ?? SelectedSpotifySearchTrack;
         if (track is null)
         {
             SpotifyOperationMessage = "Select a Spotify track first.";
-            return Task.CompletedTask;
+            return;
         }
 
-        QueueSpotifyTrackToActiveDeck(track);
-        return Task.CompletedTask;
+        await QueueSpotifyTrackToDeckAsync(track, ActiveDeckName);
     }
 
     private async Task PlayImportedSpotifyPlaylistAsync()
@@ -1616,16 +2666,15 @@ public sealed class MainPageViewModel : ObservableObject
         });
     }
 
-    private Task PlayFromSelectedSpotifyTrackAsync()
+    private async Task PlayFromSelectedSpotifyTrackAsync()
     {
         if (SelectedImportedSpotifyTrack is null)
         {
             SpotifyOperationMessage = "Select a Spotify playlist track first.";
-            return Task.CompletedTask;
+            return;
         }
 
-        QueueSpotifyTrackToActiveDeck(SelectedImportedSpotifyTrack);
-        return Task.CompletedTask;
+        await QueueSpotifyTrackToDeckAsync(SelectedImportedSpotifyTrack, ActiveDeckName);
     }
 
     private async Task AddSelectedTrackToQueueAsync()
@@ -1692,6 +2741,17 @@ public sealed class MainPageViewModel : ObservableObject
 
     private async Task SkipNextSpotifyAsync()
     {
+        if (await TryPlayNextDeckQueueItemAsync())
+        {
+            return;
+        }
+
+        if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
+        {
+            SpotifyOperationMessage = $"No next queued song on {NormalizeDeckName(_playingDeckQueueItemId is null ? ActiveDeckName : _playingDeckName)}.";
+            return;
+        }
+
         await RunSpotifyOperationAsync(async () =>
         {
             await EnsurePlaybackScopesAsync();
@@ -1716,13 +2776,41 @@ public sealed class MainPageViewModel : ObservableObject
 
     private async Task SetSpotifyVolumeAsync()
     {
+        await SetDeckOutputVolumeAsync(ActiveDeckName);
+    }
+
+    private async Task SetDeckOutputVolumeAsync(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        var volumePercent = ResolveDeckVolumePercent(normalizedDeckName);
+        await SavePlaybackSettingsAsync();
+
+        if (!ShouldApplyVolumeToLiveOutput(normalizedDeckName))
+        {
+            SpotifyOperationMessage = $"{normalizedDeckName} volume saved at {FormatVolume(volumePercent)}. It will apply when that deck plays.";
+            return;
+        }
+
+        if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
+        {
+            _localMediaPlayer.Volume = ResolveDeckVolumeScalar(normalizedDeckName);
+            SpotifyOperationMessage = $"{normalizedDeckName} local volume set to {FormatVolume(volumePercent)}.";
+            return;
+        }
+
+        if (SelectedPlaybackMode != SpotifyPlaybackModes.SpotifyConnect)
+        {
+            SpotifyOperationMessage = $"{normalizedDeckName} volume saved at {FormatVolume(volumePercent)}. Open in Spotify App mode uses Spotify or Windows volume controls.";
+            return;
+        }
+
         await RunSpotifyOperationAsync(async () =>
         {
             await EnsurePlaybackScopesAsync();
             EnsureSpotifyConnectPlaybackMode();
-            await _spotifyPlayerService.SetVolumeAsync(CurrentSpotifySettings, await ResolveSelectedDeviceIdAsync(), Convert.ToInt32(DefaultSpotifyVolume));
+            await _spotifyPlayerService.SetVolumeAsync(CurrentSpotifySettings, await ResolveSelectedDeviceIdAsync(), volumePercent);
             await SavePlaybackSettingsAsync();
-            SpotifyOperationMessage = $"Requested Spotify volume {DefaultSpotifyVolumeDisplay}. Device support may vary.";
+            SpotifyOperationMessage = $"Requested {normalizedDeckName} Spotify volume {FormatVolume(volumePercent)}. Device support may vary.";
         });
     }
 
@@ -1810,6 +2898,7 @@ public sealed class MainPageViewModel : ObservableObject
         {
             await LoadImportedSpotifyPlaylistsCoreAsync();
             SpotifyOperationMessage = $"Loaded {ImportedSpotifyPlaylists.Count} imported Spotify playlists from local SQLite.";
+            QueueSessionStateSave();
         });
     }
 
@@ -1825,6 +2914,7 @@ public sealed class MainPageViewModel : ObservableObject
         {
             await LoadImportedPlaylistTracksCoreAsync();
             SpotifyOperationMessage = $"Loaded {ImportedSpotifyTracks.Count} imported tracks from {SelectedImportedSpotifyPlaylist.Name}.";
+            QueueSessionStateSave();
         });
     }
 
@@ -1832,24 +2922,176 @@ public sealed class MainPageViewModel : ObservableObject
     {
         try
         {
-            var musicFolder = Environment.GetFolderPath(Environment.SpecialFolder.MyMusic);
+            var musicFolder = string.IsNullOrWhiteSpace(LocalMusicFolderPath)
+                ? Environment.GetFolderPath(Environment.SpecialFolder.MyMusic)
+                : LocalMusicFolderPath;
+            LocalMusicFolderPath = musicFolder;
+            if (!Directory.Exists(musicFolder))
+            {
+                _allLocalMusicTracks.Clear();
+                LocalMusicTracks.Clear();
+                SelectedLocalMusicTrack = null;
+                LocalLibraryStatus = $"Local music folder not found: {musicFolder}";
+                SpotifyOperationMessage = LocalLibraryStatus;
+                QueueSessionStateSave();
+                return;
+            }
+
             LocalLibraryStatus = $"Scanning {musicFolder}...";
-            var tracks = await _localMusicLibraryService.LoadDefaultMusicLibraryAsync();
+            var tracks = await _localMusicLibraryService.LoadFromFolderAsync(musicFolder);
             _allLocalMusicTracks.Clear();
             _allLocalMusicTracks.AddRange(tracks);
             ApplyLocalMusicFilter();
 
             LocalLibraryStatus = tracks.Count == 0
-                ? $"No supported audio files found in {musicFolder}."
+                ? $"No supported music files found in {musicFolder}. MP3, MP4, WAV, M4A, AAC, WMA, FLAC, AIFF, OGG, and OPUS are included."
                 : $"Loaded {tracks.Count} local audio file(s) from {musicFolder}.";
             CurrentOutputStatus = "Local file mode is ready.";
             SpotifyOperationMessage = LocalLibraryStatus;
+            QueueSessionStateSave();
         }
         catch (Exception ex)
         {
             LocalLibraryStatus = $"Local music scan failed: {ex.Message}";
             SpotifyOperationMessage = LocalLibraryStatus;
         }
+    }
+
+    public async Task LoadLocalMusicFromFolderAsync(string folderPath)
+    {
+        LocalMusicFolderPath = folderPath;
+        await LoadLocalMusicAsync();
+    }
+
+    private async Task LoadLocalPlaylistsAsync()
+    {
+        await LoadLocalPlaylistsCoreAsync();
+        LocalPlaylistStatus = LocalMusicPlaylists.Count == 0
+            ? "No saved local playlists yet."
+            : $"Loaded {LocalMusicPlaylists.Count} saved local playlist(s).";
+    }
+
+    private async Task LoadLocalPlaylistsCoreAsync()
+    {
+        var selectedId = SelectedLocalMusicPlaylist?.Id;
+        var playlists = await _localPlaylistRepository.GetPlaylistsAsync();
+        ReplaceCollection(LocalMusicPlaylists, playlists);
+        SelectedLocalMusicPlaylist = LocalMusicPlaylists.FirstOrDefault(playlist => playlist.Id == selectedId)
+            ?? LocalMusicPlaylists.FirstOrDefault();
+    }
+
+    public async Task<LocalMusicPlaylist?> CreateLocalPlaylistAsync(string playlistName)
+    {
+        try
+        {
+            var playlist = await _localPlaylistRepository.CreatePlaylistAsync(playlistName);
+            await LoadLocalPlaylistsCoreAsync();
+            SelectedLocalMusicPlaylist = LocalMusicPlaylists.FirstOrDefault(existing => existing.Id == playlist.Id)
+                ?? playlist;
+            LocalPlaylistStatus = $"Saved local playlist: {SelectedLocalMusicPlaylist.Name}.";
+            QueueSessionStateSave();
+            return SelectedLocalMusicPlaylist;
+        }
+        catch (Exception ex)
+        {
+            LocalPlaylistStatus = $"Local playlist could not be saved: {ex.Message}";
+            SpotifyOperationMessage = LocalPlaylistStatus;
+            return null;
+        }
+    }
+
+    public async Task AddLocalTracksToSelectedPlaylistAsync(IEnumerable<LocalMusicTrack> tracks)
+    {
+        if (SelectedLocalMusicPlaylist is null)
+        {
+            LocalPlaylistStatus = "Create or select a local playlist first.";
+            SpotifyOperationMessage = LocalPlaylistStatus;
+            return;
+        }
+
+        var filePaths = tracks
+            .Where(track => File.Exists(track.FilePath))
+            .Select(track => track.FilePath)
+            .ToList();
+        if (filePaths.Count == 0)
+        {
+            LocalPlaylistStatus = "Select local songs before adding to a playlist.";
+            SpotifyOperationMessage = LocalPlaylistStatus;
+            return;
+        }
+
+        var playlistId = SelectedLocalMusicPlaylist.Id;
+        var added = await _localPlaylistRepository.AddTracksAsync(playlistId, filePaths);
+        await LoadLocalPlaylistsCoreAsync();
+        SelectedLocalMusicPlaylist = LocalMusicPlaylists.FirstOrDefault(playlist => playlist.Id == playlistId)
+            ?? SelectedLocalMusicPlaylist;
+        LocalPlaylistStatus = added == 0
+            ? $"Those songs were already in {SelectedLocalMusicPlaylist.Name}."
+            : $"Added {added} song(s) to {SelectedLocalMusicPlaylist.Name}.";
+        SpotifyOperationMessage = LocalPlaylistStatus;
+        QueueSessionStateSave();
+    }
+
+    private async Task AddFilteredLocalMusicToSelectedPlaylistAsync()
+    {
+        await AddLocalTracksToSelectedPlaylistAsync(LocalMusicTracks);
+    }
+
+    public async Task QueueSelectedLocalPlaylistToDeckAsync(string deckName)
+    {
+        if (SelectedLocalMusicPlaylist is null)
+        {
+            LocalPlaylistStatus = "Select a saved local playlist first.";
+            SpotifyOperationMessage = LocalPlaylistStatus;
+            return;
+        }
+
+        var playlist = SelectedLocalMusicPlaylist;
+        var added = await QueueLocalPlaylistsToDeckAsync([playlist], deckName);
+        if (added == 0)
+        {
+            LocalPlaylistStatus = $"{playlist.Name} has no available songs. Scan or reattach the folder that contains them.";
+            SpotifyOperationMessage = LocalPlaylistStatus;
+        }
+    }
+
+    private async Task DeleteSelectedLocalPlaylistAsync()
+    {
+        if (SelectedLocalMusicPlaylist is null)
+        {
+            LocalPlaylistStatus = "Select a saved local playlist to delete.";
+            return;
+        }
+
+        var name = SelectedLocalMusicPlaylist.Name;
+        await _localPlaylistRepository.DeletePlaylistAsync(SelectedLocalMusicPlaylist.Id);
+        await LoadLocalPlaylistsCoreAsync();
+        LocalPlaylistStatus = $"Deleted local playlist: {name}.";
+        SpotifyOperationMessage = LocalPlaylistStatus;
+        QueueSessionStateSave();
+    }
+
+    private async Task<IReadOnlyList<LocalMusicTrack>> LoadSelectedLocalPlaylistTracksAsync()
+    {
+        if (SelectedLocalMusicPlaylist is null)
+        {
+            return [];
+        }
+
+        return await LoadLocalPlaylistTracksAsync(SelectedLocalMusicPlaylist);
+    }
+
+    private async Task<IReadOnlyList<LocalMusicTrack>> LoadLocalPlaylistTracksAsync(LocalMusicPlaylist playlist)
+    {
+        var paths = await _localPlaylistRepository.GetTrackFilePathsAsync(playlist.Id);
+        var tracks = await _localMusicLibraryService.LoadFromFilePathsAsync(paths);
+        var order = paths
+            .Select((path, index) => new { Path = path, Index = index })
+            .ToDictionary(pair => pair.Path, pair => pair.Index, StringComparer.OrdinalIgnoreCase);
+        return tracks
+            .OrderBy(track => order.GetValueOrDefault(track.FilePath, int.MaxValue))
+            .ThenBy(track => track.FileName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private Task SearchLocalMusicAsync()
@@ -1859,52 +3101,96 @@ public sealed class MainPageViewModel : ObservableObject
             ? $"Showing all {_allLocalMusicTracks.Count} local audio file(s)."
             : $"Showing {LocalMusicTracks.Count} of {_allLocalMusicTracks.Count} local audio file(s).";
         SpotifyOperationMessage = LocalLibraryStatus;
+        QueueSessionStateSave();
         return Task.CompletedTask;
     }
 
     private void ApplyLocalMusicFilter()
     {
-        var filteredTracks = _localMusicLibraryService.Search(_allLocalMusicTracks, LocalMusicSearchQuery);
+        var selectedFilePath = SelectedLocalMusicTrack?.FilePath;
+        var filteredTracks = SortLocalMusicTracks(_localMusicLibraryService.Search(_allLocalMusicTracks, LocalMusicSearchQuery));
         LocalMusicTracks.Clear();
         foreach (var track in filteredTracks.Take(500))
         {
             LocalMusicTracks.Add(track);
         }
 
-        SelectedLocalMusicTrack = LocalMusicTracks.FirstOrDefault();
+        SelectedLocalMusicTrack = LocalMusicTracks.FirstOrDefault(track =>
+            string.Equals(track.FilePath, selectedFilePath, StringComparison.OrdinalIgnoreCase))
+            ?? LocalMusicTracks.FirstOrDefault();
     }
 
-    private Task QueueSelectedLocalMusicAsync()
+    private IEnumerable<LocalMusicTrack> SortLocalMusicTracks(IEnumerable<LocalMusicTrack> tracks) =>
+        SelectedLocalMusicSortOption switch
+        {
+            LocalSortTitle => tracks
+                .OrderBy(track => track.Title, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(track => track.Artist, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(track => track.Folder, StringComparer.OrdinalIgnoreCase),
+            LocalSortArtist => tracks
+                .OrderBy(track => track.DisplayArtist, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(track => track.Title, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(track => track.Folder, StringComparer.OrdinalIgnoreCase),
+            LocalSortBpm => tracks
+                .OrderBy(track => track.BPM is null)
+                .ThenBy(track => track.BPM)
+                .ThenBy(track => track.MusicalKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(track => track.Title, StringComparer.OrdinalIgnoreCase),
+            LocalSortKey => tracks
+                .OrderBy(track => string.IsNullOrWhiteSpace(track.MusicalKey))
+                .ThenBy(track => track.MusicalKey, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(track => track.BPM is null)
+                .ThenBy(track => track.BPM)
+                .ThenBy(track => track.Title, StringComparer.OrdinalIgnoreCase),
+            LocalSortNewest => tracks
+                .OrderByDescending(track => track.LastModifiedAt)
+                .ThenBy(track => track.Folder, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(track => track.FileName, StringComparer.OrdinalIgnoreCase),
+            LocalSortDuration => tracks
+                .OrderBy(track => track.Duration is null)
+                .ThenBy(track => track.Duration)
+                .ThenBy(track => track.Title, StringComparer.OrdinalIgnoreCase),
+            LocalSortFileType => tracks
+                .OrderBy(track => track.Extension, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(track => track.Folder, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(track => track.FileName, StringComparer.OrdinalIgnoreCase),
+            _ => tracks
+                .OrderBy(track => track.Folder, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(track => track.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(track => track.Title, StringComparer.OrdinalIgnoreCase)
+        };
+
+    private async Task QueueSelectedLocalMusicAsync()
     {
         if (SelectedLocalMusicTrack is null)
         {
             SpotifyOperationMessage = "Select a local music file first.";
-            return Task.CompletedTask;
+            return;
         }
 
-        QueueLocalTrackToActiveDeck(SelectedLocalMusicTrack);
-        return Task.CompletedTask;
+        await QueueLocalTrackToDeckAsync(SelectedLocalMusicTrack, ActiveDeckName);
     }
 
-    private Task StartSelectedLocalMusicAsync()
+    private Task<bool> StartSelectedLocalMusicAsync(string? deckName = null)
     {
         if (SelectedLocalMusicTrack is null)
         {
             SpotifyOperationMessage = "Select a local music file first.";
-            return Task.CompletedTask;
+            return Task.FromResult(false);
         }
 
         if (!File.Exists(SelectedLocalMusicTrack.FilePath))
         {
             SpotifyOperationMessage = $"Local file was not found: {SelectedLocalMusicTrack.FileName}";
-            return Task.CompletedTask;
+            return Task.FromResult(false);
         }
 
         var fileUri = new Uri(SelectedLocalMusicTrack.FilePath);
+        var playbackDeckName = NormalizeDeckName(deckName ?? ActiveDeckName);
         _localMediaPlayer.Source = MediaSource.CreateFromUri(fileUri);
         _localMediaPlayer.Volume = AlwaysFadeSongs
             ? 0
-            : Math.Clamp(DefaultSpotifyVolume / 100d, 0, 1);
+            : ResolveDeckVolumeScalar(playbackDeckName);
         _localMediaPlayer.Play();
 
         SeekPositionMaximumSeconds = SelectedLocalMusicTrack.Duration?.TotalSeconds ?? 1;
@@ -1912,6 +3198,7 @@ public sealed class MainPageViewModel : ObservableObject
         IsPlaybackPlaying = true;
         SpotifyNowPlayingTitle = SelectedLocalMusicTrack.Title;
         SpotifyNowPlayingArtist = SelectedLocalMusicTrack.DisplayArtist;
+        _currentPlaybackAlbumArtUrl = ResolveLocalTrackAlbumArt(SelectedLocalMusicTrack);
         SpotifyPlaybackStatus = "Playing local";
         SpotifyTimeRemaining = SelectedLocalMusicTrack.DurationDisplay;
         SpotifyProgressDisplay = SelectedLocalMusicTrack.Duration is TimeSpan duration
@@ -1919,7 +3206,7 @@ public sealed class MainPageViewModel : ObservableObject
             : "0:00 / --:--";
         CurrentOutputStatus = $"Playing local file: {SelectedLocalMusicTrack.FileName}";
         SpotifyOperationMessage = "Local playback is running from this PC. Spotify commands do not affect local files.";
-        return Task.CompletedTask;
+        return Task.FromResult(true);
     }
 
     private void SeekLocalPlaybackTo(TimeSpan requestedPosition)
@@ -1958,6 +3245,17 @@ public sealed class MainPageViewModel : ObservableObject
         SpotifyOperationMessage = "Local playback paused.";
     }
 
+    private void ResumeLocalMusic()
+    {
+        _localMediaPlayer.Volume = ResolveDeckVolumeScalar(_playingDeckName);
+        _localMediaPlayer.Play();
+        IsPlaybackPlaying = true;
+        SpotifyPlaybackStatus = "Playing local";
+        CurrentOutputStatus = $"Resumed local file on {_playingDeckName}.";
+        SpotifyOperationMessage = "Local playback resumed.";
+        RefreshDeckDisplayProperties();
+    }
+
     private async Task TogglePlaybackAsync()
     {
         if (IsPlaybackPlaying)
@@ -1974,20 +3272,79 @@ public sealed class MainPageViewModel : ObservableObject
             return;
         }
 
-        if (SelectedActiveDeckQueueItem is not null)
+        if (_playingDeckQueueItemId is not null)
         {
-            await PlayDeckQueueItemAsync(SelectedActiveDeckQueueItem);
+            if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
+            {
+                ResumeLocalMusic();
+            }
+            else
+            {
+                await ResumeSpotifyAsync();
+            }
+
             return;
         }
 
-        if (ActiveDeckQueue.FirstOrDefault() is { } nextDeckItem)
+        var nextDeckItem = SelectedActiveDeckQueueItem
+            ?? GetNextDeckQueueItem(ActiveDeckName, includeFirstIfNoLastPlayed: true);
+        if (nextDeckItem is not null)
         {
-            SelectedActiveDeckQueueItem = nextDeckItem;
             await PlayDeckQueueItemAsync(nextDeckItem);
             return;
         }
 
         await ResumeSpotifyAsync();
+    }
+
+    private async Task ToggleDeckPlaybackAsync(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        if (IsDeckPlaying(normalizedDeckName))
+        {
+            if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
+            {
+                PauseLocalMusic();
+            }
+            else
+            {
+                await PauseSpotifyAsync();
+            }
+
+            return;
+        }
+
+        if (!IsPlaybackPlaying
+            && _playingDeckQueueItemId is not null
+            && string.Equals(_playingDeckName, normalizedDeckName, StringComparison.Ordinal))
+        {
+            if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
+            {
+                ResumeLocalMusic();
+            }
+            else
+            {
+                await ResumeSpotifyAsync();
+            }
+
+            return;
+        }
+
+        ActiveDeckName = normalizedDeckName;
+        RefreshActiveDeckQueue();
+        var item = FindSelectedDeckQueueItem(normalizedDeckName)
+            ?? GetNextDeckQueueItem(normalizedDeckName, includeFirstIfNoLastPlayed: true)
+            ?? QueueForDeck(normalizedDeckName).FirstOrDefault();
+        if (item is null)
+        {
+            SpotifyOperationMessage = $"{normalizedDeckName} has no queued song to play.";
+            return;
+        }
+
+        _selectedDeckQueueItemIds[normalizedDeckName] = item.Id;
+        SelectedActiveDeckQueueItem = ActiveDeckQueue.FirstOrDefault(queueItem => queueItem.Id == item.Id)
+            ?? item;
+        await PlayDeckQueueItemAsync(item, normalizedDeckName);
     }
 
     private void SelectDeck(string deckName)
@@ -1998,7 +3355,15 @@ public sealed class MainPageViewModel : ObservableObject
         SpotifyOperationMessage = $"{ActiveDeckName} selected. Cue a song here, then select it for transition.";
     }
 
-    private async Task PlayDeckQueueItemAsync(DancePilotQueueItem queueItem, string? deckName = null, bool isTransition = false)
+    private void ShowDeckQueue(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        QueueViewDeckName = normalizedDeckName;
+        CacheDeckAlbumArtForQueue(normalizedDeckName);
+        SpotifyOperationMessage = $"Viewing {normalizedDeckName} queue. Playback and transition cursor are unchanged.";
+    }
+
+    private async Task<bool> PlayDeckQueueItemAsync(DancePilotQueueItem queueItem, string? deckName = null, bool isTransition = false)
     {
         var targetDeckName = deckName ?? ActiveDeckName;
         if (!string.Equals(ActiveDeckName, targetDeckName, StringComparison.Ordinal))
@@ -2015,19 +3380,25 @@ public sealed class MainPageViewModel : ObservableObject
             {
                 SelectedLocalMusicTrack = localTrack;
                 SelectedPlaybackMode = SpotifyPlaybackModes.LocalFilesFuture;
-                await StartSelectedLocalMusicAsync();
+                var started = await StartSelectedLocalMusicAsync(targetDeckName);
+                if (!started)
+                {
+                    return false;
+                }
+
                 MarkDeckItemPlaying(targetDeckName, queueItem);
                 if (!isTransition)
                 {
                     await FadeIncomingPlaybackInAsync();
                 }
-                return;
+
+                return true;
             }
         }
 
         if (queueItem.Source == SongSources.Spotify && !string.IsNullOrWhiteSpace(queueItem.ExternalUri))
         {
-            if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
+            if (SelectedPlaybackMode != SpotifyPlaybackModes.SpotifyConnect)
             {
                 SelectedPlaybackMode = SpotifyPlaybackModes.SpotifyConnect;
             }
@@ -2042,89 +3413,342 @@ public sealed class MainPageViewModel : ObservableObject
                 SpotifyUri = queueItem.ExternalUri
             };
 
-            await RunSpotifyOperationAsync(async () =>
+            var started = false;
+            var operationSucceeded = await RunSpotifyOperationAsync(async () =>
             {
-                await PlaySpotifyTrackWithFallbackAsync(track, isTransition
+                started = await PlaySpotifyTrackWithFallbackAsync(track, isTransition
                     ? $"Transitioned to {track.Title} on {targetDeckName}."
-                    : $"Playing {track.Title} from {targetDeckName}.");
+                    : $"Playing {track.Title} from {targetDeckName}.",
+                    allowExternalFallback: false);
+                if (!started)
+                {
+                    return;
+                }
+
                 MarkDeckItemPlaying(targetDeckName, queueItem);
                 if (!isTransition)
                 {
                     await FadeIncomingPlaybackInAsync();
                 }
             });
-            return;
+
+            if (!operationSucceeded || !started)
+            {
+                return false;
+            }
+
+            return true;
         }
 
         SpotifyOperationMessage = $"Queued item cannot be played yet: {queueItem.Title}.";
+        return false;
     }
 
-    public Task PlaySelectedActiveDeckQueueItemAsync() =>
-        SelectedActiveDeckQueueItem is null
-            ? Task.CompletedTask
-            : PlayDeckQueueItemAsync(SelectedActiveDeckQueueItem);
+    public async Task PlaySelectedActiveDeckQueueItemAsync()
+    {
+        if (SelectedActiveDeckQueueItem is not null)
+        {
+            await PlayDeckQueueItemAsync(SelectedActiveDeckQueueItem);
+        }
+    }
 
     public Task PlayQueueItemAsync(DancePilotQueueItem queueItem) =>
         PlayDeckQueueItemAsync(queueItem, queueItem.DeckName);
 
+    private bool TryValidateDeckQueueItemForPlayback(DancePilotQueueItem queueItem, out string? validationMessage)
+    {
+        validationMessage = null;
+        if (queueItem.Source == SongSources.Local)
+        {
+            var localTrack = _allLocalMusicTracks.FirstOrDefault(track =>
+                string.Equals(track.FilePath, queueItem.ExternalUri, StringComparison.OrdinalIgnoreCase));
+            if (localTrack is null)
+            {
+                validationMessage = $"Local track is no longer loaded for {queueItem.Title}.";
+                return false;
+            }
+
+            if (!File.Exists(localTrack.FilePath))
+            {
+                validationMessage = $"Local file was not found: {localTrack.FileName}.";
+                return false;
+            }
+
+            return true;
+        }
+
+        if (queueItem.Source == SongSources.Spotify)
+        {
+            if (string.IsNullOrWhiteSpace(queueItem.ExternalUri))
+            {
+                validationMessage = $"{queueItem.Title} does not have a playable Spotify URI.";
+                return false;
+            }
+
+            return true;
+        }
+
+        validationMessage = $"Queued item cannot be played yet: {queueItem.Title}.";
+        return false;
+    }
+
     private void MarkDeckItemPlaying(string deckName, DancePilotQueueItem queueItem)
     {
-        _playingDeckName = deckName;
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        if (_playingDeckQueueItemId != queueItem.Id || !string.Equals(_playingDeckName, normalizedDeckName, StringComparison.Ordinal))
+        {
+            WaveformHistoryForDeck(normalizedDeckName).Clear();
+        }
+
+        _playingDeckName = normalizedDeckName;
         _playingDeckQueueItemId = queueItem.Id;
+        _lastPlayedDeckQueueItemIds[normalizedDeckName] = queueItem.Id;
+        _selectedDeckQueueItemIds[normalizedDeckName] = queueItem.Id;
+        if (!string.Equals(ActiveDeckName, normalizedDeckName, StringComparison.Ordinal))
+        {
+            ActiveDeckName = normalizedDeckName;
+        }
+
+        RefreshActiveDeckQueue();
         OnPropertyChanged(nameof(CurrentDeckHeader));
         OnPropertyChanged(nameof(NextDeckHeader));
+        OnPropertyChanged(nameof(DeckAPlayPauseLabel));
+        OnPropertyChanged(nameof(DeckBPlayPauseLabel));
+        OnPropertyChanged(nameof(DefaultSpotifyVolume));
+        OnPropertyChanged(nameof(DefaultSpotifyVolumeDisplay));
         UpdateNextUpFromDecks();
+        QueueSessionStateSave();
+    }
+
+    private void MarkDeckItemCompleted(string deckName, int itemId)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        _lastPlayedDeckQueueItemIds[normalizedDeckName] = itemId;
+        _selectedDeckQueueItemIds[normalizedDeckName] = GetQueueItemAfter(normalizedDeckName, itemId)?.Id;
+
+        if (string.Equals(ActiveDeckName, normalizedDeckName, StringComparison.Ordinal))
+        {
+            RefreshActiveDeckQueue();
+        }
+        else
+        {
+            UpdateNextUpFromDecks();
+        }
+
+        QueueSessionStateSave();
+    }
+
+    private void ClearEndedPlayingDeckItemIfCurrent(string deckName, int itemId)
+    {
+        if (!string.Equals(_playingDeckName, NormalizeDeckName(deckName), StringComparison.Ordinal)
+            || _playingDeckQueueItemId != itemId)
+        {
+            return;
+        }
+
+        _playingDeckQueueItemId = null;
+        _currentPlaybackAlbumArtUrl = null;
+        OnPropertyChanged(nameof(DeckAPlayPauseLabel));
+        OnPropertyChanged(nameof(DeckBPlayPauseLabel));
+        RefreshActiveDeckQueue();
+        RefreshDeckDisplayProperties();
+        QueueSessionStateSave();
+    }
+
+    private async Task<bool> TryPlayNextDeckQueueItemAsync()
+    {
+        var deckName = NormalizeDeckName(_playingDeckQueueItemId is null ? ActiveDeckName : _playingDeckName);
+        var sourceDeckName = _playingDeckName;
+        var sourceItemId = _playingDeckQueueItemId;
+        var sourcePlaybackMode = SelectedPlaybackMode;
+        var nextItem = FindNextDeckQueueItemForManualAdvance(deckName);
+        if (nextItem is null)
+        {
+            return false;
+        }
+
+        if (IsPlaybackPlaying)
+        {
+            await FadeCurrentPlaybackOutAsync();
+        }
+
+        var started = await PlayDeckQueueItemAsync(nextItem, deckName);
+        if (!started)
+        {
+            await RestoreDeckOutputVolumeAsync(sourceDeckName, sourcePlaybackMode);
+            return false;
+        }
+
+        if (RemovePlayedQueueItems && sourceItemId is not null && nextItem.Id != sourceItemId.Value)
+        {
+            RemovePlayedQueueItem(sourceDeckName, sourceItemId.Value);
+        }
+
+        return true;
+    }
+
+    private DancePilotQueueItem? FindNextDeckQueueItemForManualAdvance(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        var queue = QueueForDeck(normalizedDeckName);
+        if (queue.Count == 0)
+        {
+            return null;
+        }
+
+        if (string.Equals(_playingDeckName, normalizedDeckName, StringComparison.Ordinal)
+            && _playingDeckQueueItemId is not null)
+        {
+            var currentIndex = queue.FindIndex(item => item.Id == _playingDeckQueueItemId);
+            if (currentIndex >= 0)
+            {
+                if (currentIndex + 1 < queue.Count)
+                {
+                    return queue[currentIndex + 1];
+                }
+
+                return RemovePlayedQueueItems ? null : queue.FirstOrDefault();
+            }
+        }
+
+        return FindSelectedDeckQueueItem(normalizedDeckName) ?? queue.FirstOrDefault();
     }
 
     private async Task<bool> MaybeTransitionDeckAsync(SpotifyPlaybackState? currentState)
     {
         if (!DeckTransitionEnabled
+            || _isTransitionAdvanceRunning
             || _playingDeckQueueItemId is null
-            || currentState?.IsPlaying != true
+            || currentState is null
             || currentState.DurationMs is null
-            || currentState.ProgressMs is null)
+            || currentState.DurationMs <= 0
+            || currentState.ProgressMs is null
+            || currentState.ProgressMs < 0)
         {
             return false;
         }
 
-        var transitionTriggerSeconds = StartTransitionOnFade
-            ? FadeOutSeconds
-            : TransitionSecondsBeforeEnd;
         var remainingMs = currentState.DurationMs.Value - currentState.ProgressMs.Value;
-        if (remainingMs > transitionTriggerSeconds * 1000)
+        var remainingSeconds = Math.Max(0, remainingMs / 1000d);
+        var transitionTriggerSeconds = AlwaysFadeSongs && StartTransitionOnFade
+            ? FadeOutSeconds + TransitionOverlapSeconds
+            : TransitionOverlapSeconds;
+        if (currentState.IsPlaying && remainingSeconds > transitionTriggerSeconds)
         {
             return false;
         }
 
-        return await TryStartTransitionTargetAsync();
+        if (!currentState.IsPlaying && remainingSeconds > LateTransitionSkipFadeSeconds)
+        {
+            return false;
+        }
+
+        return await TryStartTransitionTargetAsync(
+            skipFadeOut: !currentState.IsPlaying || remainingSeconds <= LateTransitionSkipFadeSeconds,
+            fadeOutSeconds: CreateTransitionFadeOutDuration(remainingSeconds));
     }
 
-    private async Task<bool> TryStartTransitionTargetAsync()
+    private async Task<bool> TryStartTransitionTargetAsync(bool skipFadeOut = false, double? fadeOutSeconds = null)
     {
-        var sourceItemId = _playingDeckQueueItemId;
-        var next = FindTransitionTarget();
-        if (sourceItemId is null || next is null)
+        if (_isTransitionAdvanceRunning)
         {
             return false;
         }
 
-        if (_lastTransitionSourceItemId == sourceItemId && _lastTransitionTargetItemId == next.Id)
+        var sourceDeckName = _playingDeckName;
+        var sourcePlaybackMode = SelectedPlaybackMode;
+        _isTransitionAdvanceRunning = true;
+        try
         {
+            var sourceItemId = _playingDeckQueueItemId;
+            var targetDeckName = ResolveTransitionDeckName();
+            var next = FindTransitionTarget(targetDeckName);
+            if (sourceItemId is null || next is null)
+            {
+                return false;
+            }
+
+            if (next.Id == sourceItemId.Value)
+            {
+                return false;
+            }
+
+            if (_lastTransitionSourceItemId == sourceItemId && _lastTransitionTargetItemId == next.Id)
+            {
+                return false;
+            }
+
+            if (!TryValidateDeckQueueItemForPlayback(next, out var validationMessage))
+            {
+                SpotifyOperationMessage = validationMessage ?? $"The next song on {targetDeckName} is not playable.";
+                return false;
+            }
+
+            if (skipFadeOut)
+            {
+                await SilenceCurrentPlaybackForImmediateTransitionAsync();
+            }
+            else
+            {
+                await FadeCurrentPlaybackOutAsync(fadeOutSeconds);
+            }
+
+            var started = await PlayDeckQueueItemAsync(next, targetDeckName, isTransition: true);
+            if (!started || _playingDeckQueueItemId != next.Id)
+            {
+                await RestoreDeckOutputVolumeAsync(sourceDeckName, sourcePlaybackMode);
+                SpotifyOperationMessage = $"Deck transition could not start {next.Title} on {targetDeckName}. Volume was restored.";
+                return false;
+            }
+
+            _lastTransitionSourceItemId = sourceItemId;
+            _lastTransitionTargetItemId = next.Id;
+            MarkDeckItemCompleted(sourceDeckName, sourceItemId.Value);
+            if (RemovePlayedQueueItems && next.Id != sourceItemId.Value)
+            {
+                RemovePlayedQueueItem(sourceDeckName, sourceItemId.Value);
+            }
+
+            await FadeIncomingPlaybackInAsync();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write($"Deck transition failed: {ex.Message}");
+            await RestoreDeckOutputVolumeAsync(sourceDeckName, sourcePlaybackMode);
+            SpotifyOperationMessage = $"Deck transition failed: {ex.Message}. Volume was restored.";
             return false;
         }
-
-        _lastTransitionSourceItemId = sourceItemId;
-        _lastTransitionTargetItemId = next.Id;
-        await FadeCurrentPlaybackOutAsync();
-        await PlayDeckQueueItemAsync(next, ResolveTransitionDeckName(), isTransition: true);
-        await FadeIncomingPlaybackInAsync();
-        return true;
+        finally
+        {
+            _isTransitionAdvanceRunning = false;
+        }
     }
 
-    private async Task FadeCurrentPlaybackOutAsync()
+    private double CreateTransitionFadeOutDuration(double remainingSeconds)
+    {
+        if (remainingSeconds <= LateTransitionSkipFadeSeconds)
+        {
+            return 0;
+        }
+
+        return Math.Clamp(
+            remainingSeconds - TransitionOverlapSeconds,
+            0,
+            FadeOutSeconds);
+    }
+
+    private async Task FadeCurrentPlaybackOutAsync(double? fadeOutSeconds = null)
     {
         if (!AlwaysFadeSongs)
         {
+            return;
+        }
+
+        var seconds = Math.Max(0, fadeOutSeconds ?? FadeOutSeconds);
+        if (seconds <= 0.05)
+        {
+            await SilenceCurrentPlaybackForImmediateTransitionAsync();
             return;
         }
 
@@ -2132,11 +3756,11 @@ public sealed class MainPageViewModel : ObservableObject
         {
             if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
             {
-                await FadeLocalVolumeAsync(_localMediaPlayer.Volume, 0, FadeOutSeconds);
+                await FadeLocalVolumeAsync(_localMediaPlayer.Volume, 0, seconds);
                 return;
             }
 
-            await FadeSpotifyVolumeAsync(Convert.ToInt32(DefaultSpotifyVolume), 0, FadeOutSeconds);
+            await FadeSpotifyVolumeAsync(ResolveDeckVolumePercent(_playingDeckName), 0, seconds);
         }
         catch (Exception ex)
         {
@@ -2144,7 +3768,7 @@ public sealed class MainPageViewModel : ObservableObject
         }
     }
 
-    private async Task FadeIncomingPlaybackInAsync()
+    private async Task SilenceCurrentPlaybackForImmediateTransitionAsync()
     {
         if (!AlwaysFadeSongs)
         {
@@ -2155,15 +3779,75 @@ public sealed class MainPageViewModel : ObservableObject
         {
             if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
             {
-                await FadeLocalVolumeAsync(_localMediaPlayer.Volume, DefaultSpotifyVolume / 100d, FadeInSeconds);
+                _localMediaPlayer.Volume = 0;
                 return;
             }
 
-            await FadeSpotifyVolumeAsync(0, Convert.ToInt32(DefaultSpotifyVolume), FadeInSeconds);
+            await SetSpotifyVolumeImmediateAsync(0);
         }
         catch (Exception ex)
         {
-            StartupLog.Write($"Fade-in skipped: {ex.Message}");
+            StartupLog.Write($"Immediate transition volume prep skipped: {ex.Message}");
+        }
+    }
+
+    private async Task FadeIncomingPlaybackInAsync()
+    {
+        var targetDeckName = _playingDeckName;
+        var targetPlaybackMode = SelectedPlaybackMode;
+        if (!AlwaysFadeSongs)
+        {
+            await RestoreDeckOutputVolumeAsync(targetDeckName, targetPlaybackMode);
+            return;
+        }
+
+        if (targetPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
+        {
+            var targetVolume = ResolveDeckVolumeScalar(targetDeckName);
+            try
+            {
+                await FadeLocalVolumeAsync(_localMediaPlayer.Volume, targetVolume, FadeInSeconds);
+            }
+            catch (Exception ex)
+            {
+                StartupLog.Write($"Local fade-in skipped: {ex.Message}");
+            }
+            finally
+            {
+                _localMediaPlayer.Volume = targetVolume;
+            }
+
+            return;
+        }
+
+        await FadeSpotifyVolumeAsync(0, ResolveDeckVolumePercent(targetDeckName), FadeInSeconds);
+        await RestoreDeckOutputVolumeAsync(targetDeckName, targetPlaybackMode);
+    }
+
+    private async Task RestoreDeckOutputVolumeAsync(string deckName, string playbackMode)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        if (playbackMode == SpotifyPlaybackModes.LocalFilesFuture)
+        {
+            _localMediaPlayer.Volume = ResolveDeckVolumeScalar(normalizedDeckName);
+            return;
+        }
+
+        if (playbackMode == SpotifyPlaybackModes.SpotifyConnect)
+        {
+            await TrySetSpotifyVolumeImmediateAsync(ResolveDeckVolumePercent(normalizedDeckName));
+        }
+    }
+
+    private async Task TrySetSpotifyVolumeImmediateAsync(int volume)
+    {
+        try
+        {
+            await SetSpotifyVolumeImmediateAsync(volume);
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write($"Spotify volume restore skipped: {ex.Message}");
         }
     }
 
@@ -2174,33 +3858,75 @@ public sealed class MainPageViewModel : ObservableObject
             return;
         }
 
-        await EnsurePlaybackScopesAsync();
-        EnsureSpotifyConnectPlaybackMode();
-        var deviceId = await ResolveSelectedDeviceIdAsync();
-        var steps = Math.Clamp(Convert.ToInt32(Math.Ceiling(seconds)), 2, 6);
-        var delay = TimeSpan.FromMilliseconds(Math.Max(180, seconds * 1000 / steps));
+        string deviceId;
+        try
+        {
+            await EnsurePlaybackScopesAsync();
+            EnsureSpotifyConnectPlaybackMode();
+            deviceId = await ResolveSelectedDeviceIdAsync();
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write($"Spotify fade skipped: {ex.Message}");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            StartupLog.Write("Spotify fade skipped: no Spotify Connect device was resolved.");
+            return;
+        }
+
+        var steps = Math.Clamp(Convert.ToInt32(Math.Ceiling(seconds * 3)), 6, 30);
+        var delay = TimeSpan.FromMilliseconds(Math.Max(120, seconds * 1000 / steps));
 
         for (var step = 0; step <= steps; step++)
         {
             var percent = step / (double)steps;
-            var volume = Convert.ToInt32(fromVolume + (toVolume - fromVolume) * percent);
-            await _spotifyPlayerService.SetVolumeAsync(CurrentSpotifySettings, deviceId, Math.Clamp(volume, 0, 100));
+            var easedPercent = SmoothFadeEase(percent);
+            var volume = Convert.ToInt32(fromVolume + (toVolume - fromVolume) * easedPercent);
+            try
+            {
+                await _spotifyPlayerService.SetVolumeAsync(CurrentSpotifySettings, deviceId, Math.Clamp(volume, 0, 100));
+            }
+            catch (Exception ex)
+            {
+                StartupLog.Write($"Spotify fade volume command skipped: {ex.Message}");
+                return;
+            }
+
             if (step < steps)
             {
                 await Task.Delay(delay);
             }
         }
+    }
+
+    private async Task SetSpotifyVolumeImmediateAsync(int volume)
+    {
+        if (SelectedPlaybackMode != SpotifyPlaybackModes.SpotifyConnect)
+        {
+            return;
+        }
+
+        await EnsurePlaybackScopesAsync();
+        EnsureSpotifyConnectPlaybackMode();
+        await _spotifyPlayerService.SetVolumeAsync(
+            CurrentSpotifySettings,
+            await ResolveSelectedDeviceIdAsync(),
+            Math.Clamp(volume, 0, 100));
     }
 
     private async Task FadeLocalVolumeAsync(double fromVolume, double toVolume, double seconds)
     {
-        var steps = Math.Clamp(Convert.ToInt32(Math.Ceiling(seconds * 2)), 2, 20);
-        var delay = TimeSpan.FromMilliseconds(Math.Max(40, seconds * 1000 / steps));
+        var steps = Math.Clamp(Convert.ToInt32(Math.Ceiling(seconds * 12)), 12, 160);
+        var delay = TimeSpan.FromMilliseconds(Math.Max(25, seconds * 1000 / steps));
 
         for (var step = 0; step <= steps; step++)
         {
             var percent = step / (double)steps;
-            _localMediaPlayer.Volume = Math.Clamp(fromVolume + (toVolume - fromVolume) * percent, 0, 1);
+            var easedPercent = SmoothFadeEase(percent);
+            _localMediaPlayer.Volume = Math.Clamp(fromVolume + (toVolume - fromVolume) * easedPercent, 0, 1);
             if (step < steps)
             {
                 await Task.Delay(delay);
@@ -2208,27 +3934,58 @@ public sealed class MainPageViewModel : ObservableObject
         }
     }
 
-    private DancePilotQueueItem? FindTransitionTarget()
+    private static double SmoothFadeEase(double percent)
     {
-        var deckName = ResolveTransitionDeckName();
-        var queue = QueueForDeck(deckName);
+        var clamped = Math.Clamp(percent, 0, 1);
+        return clamped * clamped * (3 - (2 * clamped));
+    }
+
+    private DancePilotQueueItem? FindTransitionTarget(string? deckName = null)
+    {
+        var resolvedDeckName = NormalizeDeckName(deckName ?? ResolveTransitionDeckName());
+        return GetNextDeckQueueItem(resolvedDeckName, includeFirstIfNoLastPlayed: true);
+    }
+
+    private DancePilotQueueItem? GetNextDeckQueueItem(string deckName, bool includeFirstIfNoLastPlayed = false)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        var queue = QueueForDeck(normalizedDeckName);
         if (queue.Count == 0)
         {
             return null;
         }
 
-        var selected = FindSelectedDeckQueueItem(deckName);
-        if (selected is not null && selected.Id != _playingDeckQueueItemId)
+        var lastPlayedId = _lastPlayedDeckQueueItemIds.GetValueOrDefault(normalizedDeckName);
+        if (lastPlayedId is null
+            && string.Equals(_playingDeckName, normalizedDeckName, StringComparison.Ordinal)
+            && _playingDeckQueueItemId is not null)
         {
-            return selected;
+            lastPlayedId = _playingDeckQueueItemId;
         }
 
-        if (SelectedTransitionMode == TransitionOppositeDeck)
+        if (lastPlayedId is null)
         {
-            return queue.FirstOrDefault();
+            return includeFirstIfNoLastPlayed ? queue.FirstOrDefault() : null;
         }
 
-        var currentIndex = queue.FindIndex(item => item.Id == _playingDeckQueueItemId);
+        var currentIndex = queue.FindIndex(item => item.Id == lastPlayedId.Value);
+        if (currentIndex < 0)
+        {
+            return includeFirstIfNoLastPlayed ? queue.FirstOrDefault() : null;
+        }
+
+        if (currentIndex + 1 >= queue.Count)
+        {
+            return null;
+        }
+
+        return queue[currentIndex + 1];
+    }
+
+    private DancePilotQueueItem? GetQueueItemAfter(string deckName, int itemId)
+    {
+        var queue = QueueForDeck(NormalizeDeckName(deckName));
+        var currentIndex = queue.FindIndex(item => item.Id == itemId);
         return currentIndex >= 0 && currentIndex + 1 < queue.Count
             ? queue[currentIndex + 1]
             : null;
@@ -2249,6 +4006,12 @@ public sealed class MainPageViewModel : ObservableObject
         return QueueForDeck(deckName).FirstOrDefault(item => item.Id == selectedId.Value);
     }
 
+    private int? GetLastPlayedDeckQueueItemId(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        return _lastPlayedDeckQueueItemIds.GetValueOrDefault(normalizedDeckName);
+    }
+
     private static string OppositeDeckName(string deckName) =>
         deckName == "Deck B" ? "Deck A" : "Deck B";
 
@@ -2256,12 +4019,35 @@ public sealed class MainPageViewModel : ObservableObject
         deckName == "Deck B" ? _deckBQueue : _deckAQueue;
 
     private bool IsDeckPlaying(string deckName) =>
-        string.Equals(_playingDeckName, deckName, StringComparison.Ordinal)
+        string.Equals(_playingDeckName, NormalizeDeckName(deckName), StringComparison.Ordinal)
         && IsPlaybackPlaying
         && _playingDeckQueueItemId is not null;
 
+    private DancePilotQueueItem? ResolveNextDeckDisplayItem(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        var queue = QueueForDeck(normalizedDeckName);
+        if (queue.Count == 0)
+        {
+            return null;
+        }
+
+        var next = GetNextDeckQueueItem(normalizedDeckName, includeFirstIfNoLastPlayed: true);
+        if (next is not null)
+        {
+            return next;
+        }
+
+        return RemovePlayedQueueItems ? null : queue.FirstOrDefault();
+    }
+
     private DancePilotQueueItem? ResolveDeckDisplayItem(string deckName) =>
-        FindSelectedDeckQueueItem(deckName) ?? QueueForDeck(deckName).FirstOrDefault();
+        ResolvePlayingDeckItem(deckName) ?? ResolveNextDeckDisplayItem(deckName);
+
+    private DancePilotQueueItem? ResolvePlayingDeckItem(string deckName) =>
+        IsDeckPlaying(deckName)
+            ? QueueForDeck(NormalizeDeckName(deckName)).FirstOrDefault(item => item.Id == _playingDeckQueueItemId)
+            : null;
 
     private string ResolveDeckStatus(string deckName)
     {
@@ -2285,30 +4071,33 @@ public sealed class MainPageViewModel : ObservableObject
     {
         if (IsDeckPlaying(deckName))
         {
-            return SpotifyNowPlayingTitle;
+            return ResolvePlayingDeckItem(deckName)?.Title ?? SpotifyNowPlayingTitle;
         }
 
-        return ResolveDeckDisplayItem(deckName)?.Title ?? "No song queued";
+        return ResolveNextDeckDisplayItem(deckName)?.Title ?? "No song queued";
     }
 
     private string ResolveDeckArtist(string deckName)
     {
         if (IsDeckPlaying(deckName))
         {
-            return SpotifyNowPlayingArtist;
+            return ResolvePlayingDeckItem(deckName)?.Artist ?? SpotifyNowPlayingArtist;
         }
 
-        return ResolveDeckDisplayItem(deckName)?.Artist ?? "Drag songs or playlists here";
+        return ResolveNextDeckDisplayItem(deckName)?.Artist ?? "Drag songs or playlists here";
     }
 
     private string ResolveDeckDetail(string deckName)
     {
         if (IsDeckPlaying(deckName))
         {
-            return SpotifyProgressDisplay;
+            var playingItem = ResolvePlayingDeckItem(deckName);
+            return !string.IsNullOrWhiteSpace(playingItem?.MixDisplay)
+                ? $"{playingItem.MixDisplay} | {SpotifyProgressDisplay}"
+                : SpotifyProgressDisplay;
         }
 
-        var item = ResolveDeckDisplayItem(deckName);
+        var item = ResolveNextDeckDisplayItem(deckName);
         return item is null
             ? "Queue is empty"
             : item.MixDisplay;
@@ -2316,18 +4105,108 @@ public sealed class MainPageViewModel : ObservableObject
 
     private string? ResolveDeckAlbumArtSource(string deckName)
     {
+        var playingItem = ResolvePlayingDeckItem(deckName);
+        if (playingItem is not null)
+        {
+            var playingArtSource = ResolveQueueItemAlbumArtSource(playingItem);
+            if (HasUsableAlbumArtSource(playingArtSource))
+            {
+                return playingArtSource;
+            }
+
+            if (playingItem.Source == SongSources.Spotify
+                && PlaybackStateMatchesQueueItem(playingItem)
+                && !string.IsNullOrWhiteSpace(_currentPlaybackAlbumArtUrl))
+            {
+                return _currentPlaybackAlbumArtUrl;
+            }
+
+            return playingArtSource;
+        }
+
         if (IsDeckPlaying(deckName) && !string.IsNullOrWhiteSpace(_currentPlaybackAlbumArtUrl))
         {
             return _currentPlaybackAlbumArtUrl;
         }
 
-        return ResolveDeckDisplayItem(deckName)?.AlbumArtUrl;
+        var displayItem = ResolveNextDeckDisplayItem(deckName);
+        return displayItem is null ? null : ResolveQueueItemAlbumArtSource(displayItem);
     }
+
+    private string? ResolveQueueItemAlbumArtSource(DancePilotQueueItem item)
+    {
+        if (HasUsableAlbumArtSource(item.AlbumArtUrl))
+        {
+            return item.AlbumArtUrl;
+        }
+
+        if (item.Source == SongSources.Spotify)
+        {
+            var track = FindSpotifyTrackByUri(item.ExternalUri);
+            if (HasUsableAlbumArtSource(track?.AlbumArtUrl))
+            {
+                return track!.AlbumArtUrl;
+            }
+        }
+
+        if (item.Source == SongSources.Local)
+        {
+            var localTrack = _allLocalMusicTracks.FirstOrDefault(track =>
+                string.Equals(track.FilePath, item.ExternalUri, StringComparison.OrdinalIgnoreCase));
+            if (HasUsableAlbumArtSource(localTrack?.AlbumArtUrl))
+            {
+                return localTrack!.AlbumArtUrl;
+            }
+        }
+
+        return item.AlbumArtUrl;
+    }
+
+    private bool PlaybackStateMatchesQueueItem(DancePilotQueueItem item) =>
+        string.Equals(SpotifyNowPlayingTitle, item.Title, StringComparison.OrdinalIgnoreCase)
+        && (string.IsNullOrWhiteSpace(item.Artist)
+            || string.Equals(SpotifyNowPlayingArtist, item.Artist, StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsDefaultAlbumArtSource(string? albumArtSource)
+    {
+        if (string.IsNullOrWhiteSpace(albumArtSource))
+        {
+            return true;
+        }
+
+        var normalized = NormalizeAlbumArtSource(albumArtSource, DefaultLocalAlbumArtPath);
+        return string.Equals(normalized, DefaultLocalAlbumArtPath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasUsableAlbumArtSource(string? albumArtSource) =>
+        !string.IsNullOrWhiteSpace(albumArtSource)
+        && !IsDefaultAlbumArtSource(albumArtSource);
+
+    private bool IsDeckDisplayItem(string deckName, int itemId) =>
+        ResolveDeckDisplayItem(NormalizeDeckName(deckName))?.Id == itemId;
+
+    private bool IsDeckNextPlayableItem(string deckName, int itemId) =>
+        ResolveNextDeckDisplayItem(NormalizeDeckName(deckName))?.Id == itemId;
+
+    private string? _currentDeckAlbumArtSource = DefaultCurrentAlbumArtPath;
+    private string? _nextDeckAlbumArtSource = DefaultNextAlbumArtPath;
 
     private void RefreshDeckDisplayProperties()
     {
-        CurrentDeckAlbumArt = CreateAlbumArtSource(ResolveDeckAlbumArtSource("Deck A"), DefaultCurrentAlbumArtPath);
-        NextDeckAlbumArt = CreateAlbumArtSource(ResolveDeckAlbumArtSource("Deck B"), DefaultNextAlbumArtPath);
+        var currentDeckSource = ResolveDeckAlbumArtSource("Deck A");
+        if (!string.Equals(currentDeckSource, _currentDeckAlbumArtSource, StringComparison.OrdinalIgnoreCase))
+        {
+            CurrentDeckAlbumArt = CreateAlbumArtSource(currentDeckSource, DefaultCurrentAlbumArtPath);
+            _currentDeckAlbumArtSource = currentDeckSource;
+        }
+
+        var nextDeckSource = ResolveDeckAlbumArtSource("Deck B");
+        if (!string.Equals(nextDeckSource, _nextDeckAlbumArtSource, StringComparison.OrdinalIgnoreCase))
+        {
+            NextDeckAlbumArt = CreateAlbumArtSource(nextDeckSource, DefaultNextAlbumArtPath);
+            _nextDeckAlbumArtSource = nextDeckSource;
+        }
+
         OnPropertyChanged(nameof(DeckAStatus));
         OnPropertyChanged(nameof(DeckBStatus));
         OnPropertyChanged(nameof(DeckATitle));
@@ -2361,22 +4240,6 @@ public sealed class MainPageViewModel : ObservableObject
             : spotifyUri;
     }
 
-    private Song? FindSampleSongMatch(string title, string artist)
-    {
-        static string Normalize(string value) =>
-            new(value
-                .Where(char.IsLetterOrDigit)
-                .Select(char.ToLowerInvariant)
-                .ToArray());
-
-        var normalizedTitle = Normalize(title);
-        var normalizedArtist = Normalize(artist);
-        return DancePilotSampleData.Songs.FirstOrDefault(song =>
-            Normalize(song.Title) == normalizedTitle
-            && (string.IsNullOrWhiteSpace(normalizedArtist)
-                || Normalize(song.Artist) == normalizedArtist));
-    }
-
     public void QueueSongToActiveDeck(Song song)
     {
         QueueSongToDeck(song, ActiveDeckName);
@@ -2403,20 +4266,21 @@ public sealed class MainPageViewModel : ObservableObject
 
     public void QueueSpotifyTrackToActiveDeck(SpotifyTrackMetadata track)
     {
-        QueueSpotifyTrackToDeck(track, ActiveDeckName);
+        DispatchAsync(() => QueueSpotifyTrackToDeckAsync(track, ActiveDeckName));
     }
 
     public void QueueSpotifyTracksToActiveDeck(IEnumerable<SpotifyTrackMetadata> tracks)
     {
-        QueueSpotifyTracksToDeck(tracks, ActiveDeckName);
+        DispatchAsync(() => QueueSpotifyTracksToDeckAsync(tracks, ActiveDeckName));
     }
 
-    private int QueueSpotifyTracksToDeck(IEnumerable<SpotifyTrackMetadata> tracks, string deckName)
+    private async Task<int> QueueSpotifyTracksToDeckAsync(IEnumerable<SpotifyTrackMetadata> tracks, string deckName, int? beforeItemId = null)
     {
         var added = 0;
+        var normalizedDeckName = NormalizeDeckName(deckName);
         foreach (var track in tracks)
         {
-            if (QueueSpotifyTrackToDeck(track, deckName, announce: false))
+            if (await QueueSpotifyTrackToDeckAsync(track, normalizedDeckName, announce: false, selectQueuedItem: added == 0, beforeItemId: beforeItemId))
             {
                 added++;
             }
@@ -2424,23 +4288,28 @@ public sealed class MainPageViewModel : ObservableObject
 
         if (added > 0)
         {
-            SpotifyOperationMessage = $"Queued {added} Spotify track(s) on {NormalizeDeckName(deckName)}.";
+            SpotifyOperationMessage = $"Queued {added} Spotify track(s) on {normalizedDeckName}.";
+            QueueSessionStateSave();
         }
 
         return added;
     }
 
-    private bool QueueSpotifyTrackToDeck(SpotifyTrackMetadata track, string deckName, bool announce = true)
+    private Task<bool> QueueSpotifyTrackToDeckAsync(
+        SpotifyTrackMetadata track,
+        string deckName,
+        bool announce = true,
+        bool selectQueuedItem = true,
+        int? beforeItemId = null)
     {
         if (track.IsUnavailable || string.IsNullOrWhiteSpace(track.SpotifyUri))
         {
             SpotifyOperationMessage = $"{track.Title} is not playable through Spotify API controls. Open it in Spotify or choose another track.";
-            return false;
+            return Task.FromResult(false);
         }
 
         var normalizedDeckName = NormalizeDeckName(deckName);
-        var sampleMatch = FindSampleSongMatch(track.Title, track.Artist);
-        QueueToDeck(new DancePilotQueueItem
+        var queueItem = new DancePilotQueueItem
         {
             Id = NextDeckQueueId(),
             DeckName = normalizedDeckName,
@@ -2449,45 +4318,53 @@ public sealed class MainPageViewModel : ObservableObject
             Title = track.Title,
             Artist = track.Artist,
             AlbumArtUrl = track.AlbumArtUrl,
-            BPM = track.BPM ?? sampleMatch?.BPM,
-            MusicalKey = track.MusicalKey ?? sampleMatch?.Key,
+            BPM = track.BPM,
+            MusicalKey = track.MusicalKey,
             Status = "pending"
-        }, normalizedDeckName, announce);
-        return true;
+        };
+
+        QueueToDeck(queueItem, normalizedDeckName, announce, selectQueuedItem, beforeItemId);
+        return Task.FromResult(true);
     }
 
     public void QueueLocalTrackToActiveDeck(LocalMusicTrack track)
     {
-        QueueLocalTrackToDeck(track, ActiveDeckName);
+        DispatchAsync(() => QueueLocalTrackToDeckAsync(track, ActiveDeckName));
     }
 
     public void QueueLocalTracksToActiveDeck(IEnumerable<LocalMusicTrack> tracks)
     {
-        QueueLocalTracksToDeck(tracks, ActiveDeckName);
+        DispatchAsync(() => QueueLocalTracksToDeckAsync(tracks, ActiveDeckName));
     }
 
-    private int QueueLocalTracksToDeck(IEnumerable<LocalMusicTrack> tracks, string deckName)
+    private async Task<int> QueueLocalTracksToDeckAsync(IEnumerable<LocalMusicTrack> tracks, string deckName, int? beforeItemId = null)
     {
         var added = 0;
+        var normalizedDeckName = NormalizeDeckName(deckName);
         foreach (var track in tracks)
         {
-            QueueLocalTrackToDeck(track, deckName, announce: false);
+            await QueueLocalTrackToDeckAsync(track, normalizedDeckName, announce: false, selectQueuedItem: added == 0, beforeItemId: beforeItemId);
             added++;
         }
 
         if (added > 0)
         {
-            SpotifyOperationMessage = $"Queued {added} local track(s) on {NormalizeDeckName(deckName)}.";
+            SpotifyOperationMessage = $"Queued {added} local track(s) on {normalizedDeckName}.";
+            QueueSessionStateSave();
         }
 
         return added;
     }
 
-    private void QueueLocalTrackToDeck(LocalMusicTrack track, string deckName, bool announce = true)
+    private Task QueueLocalTrackToDeckAsync(
+        LocalMusicTrack track,
+        string deckName,
+        bool announce = true,
+        bool selectQueuedItem = true,
+        int? beforeItemId = null)
     {
         var normalizedDeckName = NormalizeDeckName(deckName);
-        var sampleMatch = FindSampleSongMatch(track.Title, track.DisplayArtist);
-        QueueToDeck(new DancePilotQueueItem
+        var queueItem = new DancePilotQueueItem
         {
             Id = NextDeckQueueId(),
             DeckName = normalizedDeckName,
@@ -2495,20 +4372,83 @@ public sealed class MainPageViewModel : ObservableObject
             ExternalUri = track.FilePath,
             Title = track.Title,
             Artist = track.DisplayArtist,
-            AlbumArtUrl = DefaultLocalAlbumArtPath,
-            BPM = sampleMatch?.BPM,
-            MusicalKey = sampleMatch?.Key,
+            AlbumArtUrl = ResolveLocalTrackAlbumArt(track),
+            BPM = track.BPM,
+            MusicalKey = track.MusicalKey,
             Status = "pending"
-        }, normalizedDeckName, announce);
+        };
+
+        QueueToDeck(queueItem, normalizedDeckName, announce, selectQueuedItem, beforeItemId);
+        return Task.CompletedTask;
+    }
+
+    private static string ResolveLocalTrackAlbumArt(LocalMusicTrack track) =>
+        string.IsNullOrWhiteSpace(track.AlbumArtUrl)
+            ? DefaultLocalAlbumArtPath
+            : track.AlbumArtUrl.Trim();
+
+    private async Task<DancePilotQueueItem> ResolveLocalQueueItemAlbumArtAsync(DancePilotQueueItem queueItem)
+    {
+        try
+        {
+            var cachedAlbumArtUri = await _albumArtCacheService.CacheAlbumArtAsync(queueItem);
+            return string.IsNullOrWhiteSpace(cachedAlbumArtUri)
+                ? queueItem
+                : queueItem with { AlbumArtUrl = cachedAlbumArtUri };
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write($"Local album art could not be cached for {queueItem.Title}: {ex.Message}");
+            return queueItem;
+        }
+    }
+
+    private async Task<DancePilotQueueItem> ResolveDisplayQueueItemAlbumArtAsync(DancePilotQueueItem queueItem)
+    {
+        if (queueItem.Source == SongSources.Local)
+        {
+            return await ResolveLocalQueueItemAlbumArtAsync(queueItem);
+        }
+
+        if (queueItem.Source != SongSources.Spotify)
+        {
+            return queueItem;
+        }
+
+        var resolvedItem = await ResolveSpotifyQueueItemAlbumArtAsync(queueItem);
+        if (!HasUsableAlbumArtSource(resolvedItem.AlbumArtUrl))
+        {
+            return resolvedItem;
+        }
+
+        try
+        {
+            var cachedAlbumArtUri = await _albumArtCacheService.CacheAlbumArtAsync(resolvedItem);
+            return string.IsNullOrWhiteSpace(cachedAlbumArtUri)
+                ? resolvedItem
+                : resolvedItem with { AlbumArtUrl = cachedAlbumArtUri };
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write($"Spotify album art could not be cached for {queueItem.Title}: {ex.Message}");
+            return resolvedItem;
+        }
     }
 
     public async Task QueueSourceSelectionToDeckAsync(
         string deckName,
         IEnumerable<SpotifyTrackMetadata> spotifyTracks,
         IEnumerable<LocalMusicTrack> localTracks,
-        IEnumerable<SpotifyPlaylistSummary> spotifyPlaylists)
+        IEnumerable<SpotifyPlaylistSummary> spotifyPlaylists,
+        int? insertBeforeItemId = null,
+        bool insertAtTop = false,
+        IEnumerable<LocalMusicPlaylist>? localPlaylists = null)
     {
         var normalizedDeckName = NormalizeDeckName(deckName);
+        var beforeItemId = insertAtTop && QueueForDeck(normalizedDeckName).Count > 0
+            ? QueueForDeck(normalizedDeckName).First().Id
+            : insertBeforeItemId;
+
         var selectedSpotifyTracks = spotifyTracks
             .DistinctBy(track => track.SpotifyUri ?? track.SpotifyTrackId)
             .ToList();
@@ -2518,38 +4458,62 @@ public sealed class MainPageViewModel : ObservableObject
         var selectedPlaylists = spotifyPlaylists
             .DistinctBy(playlist => playlist.SpotifyPlaylistId)
             .ToList();
+        var selectedLocalPlaylists = (localPlaylists ?? [])
+            .DistinctBy(playlist => playlist.Id)
+            .ToList();
+        var hasExplicitSelection = selectedSpotifyTracks.Count > 0
+            || selectedLocalTracks.Count > 0
+            || selectedPlaylists.Count > 0
+            || selectedLocalPlaylists.Count > 0;
 
         var queuedCount = 0;
         if (selectedLocalTracks.Count > 0)
         {
-            queuedCount += QueueLocalTracksToDeck(selectedLocalTracks, normalizedDeckName);
+            queuedCount += await QueueLocalTracksToDeckAsync(selectedLocalTracks, normalizedDeckName, beforeItemId);
         }
 
         if (selectedSpotifyTracks.Count > 0)
         {
-            queuedCount += QueueSpotifyTracksToDeck(selectedSpotifyTracks, normalizedDeckName);
+            queuedCount += await QueueSpotifyTracksToDeckAsync(selectedSpotifyTracks, normalizedDeckName, beforeItemId);
         }
 
         if (selectedPlaylists.Count > 0)
         {
-            queuedCount += await QueueSpotifyPlaylistsToDeckAsync(selectedPlaylists, normalizedDeckName);
+            queuedCount += await QueueSpotifyPlaylistsToDeckAsync(selectedPlaylists, normalizedDeckName, beforeItemId);
+        }
+
+        if (selectedLocalPlaylists.Count > 0)
+        {
+            queuedCount += await QueueLocalPlaylistsToDeckAsync(selectedLocalPlaylists, normalizedDeckName, beforeItemId);
+        }
+
+        if (queuedCount == 0 && !hasExplicitSelection)
+        {
+            await QueueSelectedSourceToDeckAsync(normalizedDeckName, beforeItemId);
+            return;
         }
 
         if (queuedCount == 0)
         {
-            await QueueSelectedSourceToDeckAsync(normalizedDeckName);
+            SpotifyOperationMessage = "No playable songs were found in that drop selection.";
+            return;
         }
-        else
-        {
-            SpotifyOperationMessage = $"Queued {queuedCount} item(s) on {normalizedDeckName}.";
-        }
+
+        SpotifyOperationMessage = $"Queued {queuedCount} item(s) on {normalizedDeckName}.";
+        QueueSessionStateSave();
     }
 
-    private async Task<int> QueueSpotifyPlaylistsToDeckAsync(IReadOnlyList<SpotifyPlaylistSummary> playlists, string deckName)
+    private async Task<int> QueueSpotifyPlaylistsToDeckAsync(IReadOnlyList<SpotifyPlaylistSummary> playlists, string deckName, int? beforeItemId = null)
     {
         var added = 0;
-        await RunSpotifyOperationAsync(async () =>
+        var wasBusy = IsSpotifyBusy;
+        try
         {
+            if (!wasBusy)
+            {
+                IsSpotifyBusy = true;
+            }
+
             foreach (var playlist in playlists)
             {
                 var tracks = SelectedSpotifyPlaylist is not null
@@ -2558,23 +4522,72 @@ public sealed class MainPageViewModel : ObservableObject
                         ? SpotifyPreviewTracks.ToList()
                         : (await _spotifyPlaylistImporter.PreviewPlaylistTracksAsync(CurrentSpotifySettings, playlist.SpotifyPlaylistId)).ToList();
 
-                added += QueueSpotifyTracksToDeck(
+                added += await QueueSpotifyTracksToDeckAsync(
                     tracks.Where(track => !track.IsUnavailable && !string.IsNullOrWhiteSpace(track.SpotifyUri)),
-                    deckName);
+                    deckName,
+                    beforeItemId);
             }
-        });
+        }
+        catch (SpotifyApiException ex)
+        {
+            StartupLog.Write($"Spotify playlist queue failed kind={ex.Kind} status={ex.StatusCode} uri={ex.RequestUri} body={ex.ErrorBody}");
+            SpotifyOperationMessage = ToFriendlySpotifyMessage(ex);
+        }
+        catch (Exception ex)
+        {
+            SpotifyOperationMessage = $"Spotify playlist could not be queued: {ex.Message}";
+        }
+        finally
+        {
+            if (!wasBusy)
+            {
+                IsSpotifyBusy = false;
+            }
+        }
 
         if (added > 0)
         {
             SpotifyOperationMessage = playlists.Count == 1
                 ? $"Queued {added} track(s) from {playlists[0].Name} on {NormalizeDeckName(deckName)}."
                 : $"Queued {added} track(s) from {playlists.Count} playlist(s) on {NormalizeDeckName(deckName)}.";
+            QueueSessionStateSave();
         }
 
         return added;
     }
 
-    private async Task QueueSelectedSourceToDeckAsync(string deckName)
+    private async Task<int> QueueLocalPlaylistsToDeckAsync(IReadOnlyList<LocalMusicPlaylist> playlists, string deckName, int? beforeItemId = null)
+    {
+        var added = 0;
+        foreach (var playlist in playlists)
+        {
+            var tracks = await LoadLocalPlaylistTracksAsync(playlist);
+            if (tracks.Count == 0)
+            {
+                continue;
+            }
+
+            added += await QueueLocalTracksToDeckAsync(tracks, deckName, beforeItemId);
+        }
+
+        if (added > 0)
+        {
+            LocalPlaylistStatus = playlists.Count == 1
+                ? $"Queued {added} song(s) from {playlists[0].Name} on {NormalizeDeckName(deckName)}."
+                : $"Queued {added} song(s) from {playlists.Count} local playlist(s) on {NormalizeDeckName(deckName)}.";
+            SpotifyOperationMessage = LocalPlaylistStatus;
+            QueueSessionStateSave();
+        }
+        else if (playlists.Count > 0)
+        {
+            LocalPlaylistStatus = "Those local playlist songs are not available in the selected folder anymore.";
+            SpotifyOperationMessage = LocalPlaylistStatus;
+        }
+
+        return added;
+    }
+
+    private async Task QueueSelectedSourceToDeckAsync(string deckName, int? insertBeforeItemId = null)
     {
         var normalizedDeckName = NormalizeDeckName(deckName);
 
@@ -2586,14 +4599,14 @@ public sealed class MainPageViewModel : ObservableObject
                 return;
             }
 
-            QueueLocalTrackToDeck(SelectedLocalMusicTrack, normalizedDeckName);
+            await QueueLocalTrackToDeckAsync(SelectedLocalMusicTrack, normalizedDeckName, beforeItemId: insertBeforeItemId);
             return;
         }
 
         var track = SelectedSpotifyTrack ?? SelectedSpotifySearchTrack ?? SelectedImportedSpotifyTrack;
         if (track is not null)
         {
-            QueueSpotifyTrackToDeck(track, normalizedDeckName);
+            await QueueSpotifyTrackToDeckAsync(track, normalizedDeckName, beforeItemId: insertBeforeItemId);
             return;
         }
 
@@ -2607,6 +4620,28 @@ public sealed class MainPageViewModel : ObservableObject
         SpotifyOperationMessage = "Select a playlist track, search result, imported track, or local file first.";
     }
 
+    private async Task AddLoadedPlaylistToActiveDeckAsync()
+    {
+        if (ActiveSource != SourceSpotify)
+        {
+            SpotifyOperationMessage = "Switch to Spotify playlists and load a playlist window before adding loaded tracks.";
+            return;
+        }
+
+        var tracks = GetLoadedPlayableSpotifyPreviewTracks();
+        if (tracks.Count == 0)
+        {
+            SpotifyOperationMessage = "Load a Spotify playlist into the playlist tracks window before adding it to the selected deck.";
+            return;
+        }
+
+        var normalizedDeckName = NormalizeDeckName(ActiveDeckName);
+        var added = await QueueSpotifyTracksToDeckAsync(tracks, normalizedDeckName);
+        SpotifyOperationMessage = added > 0
+            ? $"Added {added} loaded playlist track(s) to {normalizedDeckName}."
+            : "No playable loaded playlist tracks were added.";
+    }
+
     private async Task RandomizeActiveSourceToDeckAsync(string deckName)
     {
         var normalizedDeckName = NormalizeDeckName(deckName);
@@ -2616,50 +4651,80 @@ public sealed class MainPageViewModel : ObservableObject
             var tracks = LocalMusicTracks.Count > 0
                 ? LocalMusicTracks.ToList()
                 : _allLocalMusicTracks.ToList();
-            QueueRandomLocalTracksToDeck(tracks, normalizedDeckName);
+            if (tracks.Count > 0)
+            {
+                await RandomizeLocalTracksToDeckAsync(tracks, normalizedDeckName);
+            }
+            else if (!TryRandomizeDeckQueue(normalizedDeckName))
+            {
+                SpotifyOperationMessage = "Scan local music or add at least two songs to the deck before randomizing.";
+            }
+
             return;
         }
 
         if (ActiveSource is SourceYouTube or SourceTidal)
         {
-            SpotifyOperationMessage = $"{ActiveSource} randomizer will be enabled when that provider connector can return playable tracks.";
-            return;
-        }
-
-        await RunSpotifyOperationAsync(async () =>
-        {
-            if (SpotifyPreviewTracks.Count == 0 && SelectedSpotifyPlaylist is not null)
+            if (!TryRandomizeDeckQueue(normalizedDeckName))
             {
-                await PreviewSpotifyPlaylistCoreAsync();
+                SpotifyOperationMessage = $"{ActiveSource} randomizer will be enabled when that provider connector can return playable tracks.";
             }
 
-            var tracks = SpotifyPreviewTracks
-                .Where(track => !track.IsUnavailable && !string.IsNullOrWhiteSpace(track.SpotifyUri))
-                .ToList();
-
-            QueueRandomSpotifyTracksToDeck(tracks, normalizedDeckName);
-        });
-    }
-
-    private void QueueRandomSpotifyTracksToDeck(IReadOnlyList<SpotifyTrackMetadata> tracks, string deckName)
-    {
-        if (tracks.Count == 0)
-        {
-            SpotifyOperationMessage = "Load or preview a Spotify playlist with playable tracks before randomizing.";
             return;
         }
 
-        var added = 0;
-        foreach (var track in Shuffle(tracks).Take(24))
+        var loadedTracks = SpotifyPreviewTracks.ToList();
+        if (loadedTracks.Count > 0)
         {
-            QueueSpotifyTrackToDeck(track, deckName);
-            added++;
+            await RandomizeSpotifyPlaylistToDeckAsync(loadedTracks, normalizedDeckName);
+            return;
         }
 
-        SpotifyOperationMessage = $"Randomized {added} Spotify playlist track(s) onto {deckName}.";
+        if (TryRandomizeDeckQueue(normalizedDeckName))
+        {
+            return;
+        }
+
+        SpotifyOperationMessage = "Load a Spotify playlist into the playlist tracks window, or add at least two songs to the deck before randomizing.";
     }
 
-    private void QueueRandomLocalTracksToDeck(IReadOnlyList<LocalMusicTrack> tracks, string deckName)
+    private async Task RandomizeSpotifyPlaylistToDeckAsync(IReadOnlyList<SpotifyTrackMetadata> tracks, string deckName)
+    {
+        var randomizedTracks = Shuffle(tracks);
+        var playableTracks = randomizedTracks
+            .Where(IsPlayableSpotifyTrack)
+            .Take(24)
+            .ToList();
+        if (playableTracks.Count == 0)
+        {
+            SpotifyOperationMessage = "The loaded playlist was randomized, but no playable tracks were available for the deck.";
+            ReplaceCollection(SpotifyPreviewTracks, randomizedTracks);
+            SelectedSpotifyTrack = SpotifyPreviewTracks.FirstOrDefault();
+            QueueSessionStateSave();
+            return;
+        }
+
+        ReplaceCollection(SpotifyPreviewTracks, randomizedTracks);
+        SelectedSpotifyTrack = SpotifyPreviewTracks.FirstOrDefault();
+
+        PrepareDeckForRandomizedLoad(deckName);
+        var added = await QueueSpotifyTracksToDeckAsync(playableTracks, deckName);
+        SpotifyOperationMessage = added > 0
+            ? $"Randomized the loaded playlist and loaded {added} track(s) onto {NormalizeDeckName(deckName)}."
+            : "The loaded playlist was randomized, but no playable tracks were added.";
+        CacheDeckAlbumArtForQueue(deckName);
+        QueueSessionStateSave();
+    }
+
+    private List<SpotifyTrackMetadata> GetLoadedPlayableSpotifyPreviewTracks() =>
+        SpotifyPreviewTracks
+            .Where(IsPlayableSpotifyTrack)
+            .ToList();
+
+    private static bool IsPlayableSpotifyTrack(SpotifyTrackMetadata track) =>
+        !track.IsUnavailable && !string.IsNullOrWhiteSpace(track.SpotifyUri);
+
+    private async Task RandomizeLocalTracksToDeckAsync(IReadOnlyList<LocalMusicTrack> tracks, string deckName)
     {
         if (tracks.Count == 0)
         {
@@ -2667,42 +4732,293 @@ public sealed class MainPageViewModel : ObservableObject
             return;
         }
 
-        var added = 0;
-        foreach (var track in Shuffle(tracks).Take(24))
+        var randomizedTracks = Shuffle(tracks);
+        if (LocalMusicTracks.Count > 0)
         {
-            QueueLocalTrackToDeck(track, deckName);
-            added++;
+            ReplaceCollection(LocalMusicTracks, randomizedTracks);
+            SelectedLocalMusicTrack = LocalMusicTracks.FirstOrDefault();
         }
 
-        SpotifyOperationMessage = $"Randomized {added} local track(s) onto {deckName}.";
+        var deckTracks = randomizedTracks.Take(24).ToList();
+        PrepareDeckForRandomizedLoad(deckName);
+        var added = await QueueLocalTracksToDeckAsync(deckTracks, deckName);
+        SpotifyOperationMessage = $"Randomized {added} local track(s) onto {NormalizeDeckName(deckName)}.";
+        CacheDeckAlbumArtForQueue(deckName);
+        QueueSessionStateSave();
     }
 
-    private void QueueToDeck(DancePilotQueueItem item, string deckName, bool announce = true)
+    private bool TryRandomizeDeckQueue(string deckName)
     {
         var normalizedDeckName = NormalizeDeckName(deckName);
         var queue = QueueForDeck(normalizedDeckName);
-        queue.Add(item with { DeckName = normalizedDeckName, QueuePosition = queue.Count + 1 });
+        if (queue.Count < 2)
+        {
+            return false;
+        }
+
+        var playingItem = IsDeckPlaying(normalizedDeckName)
+            ? queue.FirstOrDefault(item => item.Id == _playingDeckQueueItemId)
+            : null;
+        var shuffledItems = Shuffle(queue.Where(item => playingItem is null || item.Id != playingItem.Id));
+        if (shuffledItems.Count < 2)
+        {
+            return false;
+        }
+
+        var selectedId = _selectedDeckQueueItemIds.GetValueOrDefault(normalizedDeckName);
+        queue.Clear();
+        if (playingItem is not null)
+        {
+            queue.Add(playingItem);
+        }
+
+        queue.AddRange(shuffledItems);
+        RenumberQueue(queue, normalizedDeckName);
+        _selectedDeckQueueItemIds[normalizedDeckName] =
+            selectedId is not null && queue.Any(item => item.Id == selectedId.Value)
+                ? selectedId
+                : queue.FirstOrDefault(item => playingItem is null || item.Id != playingItem.Id)?.Id
+                    ?? queue.FirstOrDefault()?.Id;
+
         ActiveDeckName = normalizedDeckName;
         RefreshActiveDeckQueue();
-        SelectedActiveDeckQueueItem = ActiveDeckQueue.LastOrDefault();
+        RefreshDeckDisplayProperties();
+        CacheDeckAlbumArtForQueue(normalizedDeckName);
+        SpotifyOperationMessage = $"Randomized {shuffledItems.Count} queued track(s) on {normalizedDeckName}.";
+        QueueSessionStateSave();
+        return true;
+    }
+
+    private void PrepareDeckForRandomizedLoad(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        var queue = QueueForDeck(normalizedDeckName);
+        var playingItem = IsDeckPlaying(normalizedDeckName)
+            ? queue.FirstOrDefault(item => item.Id == _playingDeckQueueItemId)
+            : null;
+
+        queue.Clear();
+        if (playingItem is not null)
+        {
+            queue.Add(playingItem);
+        }
+
+        RenumberQueue(queue, normalizedDeckName);
+        _selectedDeckQueueItemIds[normalizedDeckName] = playingItem?.Id;
+        ActiveDeckName = normalizedDeckName;
+        RefreshActiveDeckQueue();
+    }
+
+    private void QueueToDeck(
+        DancePilotQueueItem item,
+        string deckName,
+        bool announce = true,
+        bool selectQueuedItem = true,
+        int? beforeItemId = null)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        var queue = QueueForDeck(normalizedDeckName);
+        var queuedItem = item with { DeckName = normalizedDeckName };
+
+        if (beforeItemId is int insertBeforeId)
+        {
+            var insertIndex = queue.FindIndex(existing => existing.Id == insertBeforeId);
+            if (insertIndex < 0)
+            {
+                queue.Add(queuedItem);
+            }
+            else
+            {
+                queue.Insert(insertIndex, queuedItem);
+            }
+        }
+        else
+        {
+            queue.Add(queuedItem);
+        }
+
+        RenumberQueue(queue, normalizedDeckName);
+        ActiveDeckName = normalizedDeckName;
+        RefreshActiveDeckQueue();
+        if (selectQueuedItem)
+        {
+            SelectedActiveDeckQueueItem = ActiveDeckQueue.FirstOrDefault(queueItem => queueItem.Id == queuedItem.Id)
+                ?? queuedItem;
+        }
+
         UpdateNextUpFromDecks();
         if (announce)
         {
-            SpotifyOperationMessage = $"Queued on {normalizedDeckName}: {item.Title}. Select it for transition, or double-click the deck row to start it now.";
+            SpotifyOperationMessage = $"Queued on {normalizedDeckName}: {queuedItem.Title}. Select it for transition, or double-click the deck row to start it now.";
+        }
+
+        var isVisibleDisplayItem = IsDeckDisplayItem(normalizedDeckName, queuedItem.Id);
+        if (isVisibleDisplayItem)
+        {
+            RefreshDeckDisplayProperties();
+        }
+
+        if (isVisibleDisplayItem || IsDeckNextPlayableItem(normalizedDeckName, queuedItem.Id))
+        {
+            DispatchAsync(() => CacheQueuedAlbumArtAsync(normalizedDeckName, queuedItem.Id));
+        }
+
+        QueueSessionStateSave();
+    }
+
+    private async Task CacheQueuedAlbumArtAsync(string deckName, int itemId)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        var queue = QueueForDeck(normalizedDeckName);
+        var queueIndex = queue.FindIndex(item => item.Id == itemId);
+        if (queueIndex < 0)
+        {
+            return;
+        }
+
+        var item = queue[queueIndex];
+        item = await ResolveSpotifyQueueItemAlbumArtAsync(item);
+        queueIndex = queue.FindIndex(existing => existing.Id == itemId);
+        if (queueIndex < 0)
+        {
+            return;
+        }
+
+        if (!string.Equals(queue[queueIndex].AlbumArtUrl, item.AlbumArtUrl, StringComparison.OrdinalIgnoreCase))
+        {
+            queue[queueIndex] = item;
+            RefreshDeckAfterAlbumArtUpdate(normalizedDeckName, itemId);
+            QueueSessionStateSave();
+        }
+
+        var itemForCache = queue[queueIndex];
+        var cachedAlbumArtUri = await _albumArtCacheService.CacheAlbumArtAsync(itemForCache);
+        if (string.IsNullOrWhiteSpace(cachedAlbumArtUri))
+        {
+            return;
+        }
+
+        queueIndex = queue.FindIndex(existing => existing.Id == itemId);
+        if (queueIndex < 0
+            || string.Equals(queue[queueIndex].AlbumArtUrl, cachedAlbumArtUri, StringComparison.OrdinalIgnoreCase)
+            || !ShouldReplaceQueueAlbumArtWithCachedUri(queue[queueIndex]))
+        {
+            return;
+        }
+
+        queue[queueIndex] = queue[queueIndex] with { AlbumArtUrl = cachedAlbumArtUri };
+        RefreshDeckAfterAlbumArtUpdate(normalizedDeckName, itemId);
+        QueueSessionStateSave();
+    }
+
+    private async Task<DancePilotQueueItem> ResolveSpotifyQueueItemAlbumArtAsync(DancePilotQueueItem item)
+    {
+        if (item.Source != SongSources.Spotify || HasUsableAlbumArtSource(item.AlbumArtUrl))
+        {
+            return item;
+        }
+
+        var inMemoryTrack = FindSpotifyTrackByUri(item.ExternalUri);
+        if (HasUsableAlbumArtSource(inMemoryTrack?.AlbumArtUrl))
+        {
+            return item with { AlbumArtUrl = inMemoryTrack!.AlbumArtUrl };
+        }
+
+        var trackId = ExtractSpotifyTrackId(item.ExternalUri);
+        if (string.IsNullOrWhiteSpace(trackId))
+        {
+            return item;
+        }
+
+        try
+        {
+            if (!await _spotifyService.IsConnectedAsync())
+            {
+                return item;
+            }
+
+            var spotifyTrack = await _spotifyService.GetTrackAsync(CurrentSpotifySettings, trackId);
+            return HasUsableAlbumArtSource(spotifyTrack.AlbumArtUrl)
+                ? item with { AlbumArtUrl = spotifyTrack.AlbumArtUrl }
+                : item;
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write($"Spotify album art lookup skipped for {item.Title}: {ex.Message}");
+            return item;
+        }
+    }
+
+    private static bool ShouldReplaceQueueAlbumArtWithCachedUri(DancePilotQueueItem item) =>
+        item.Source == SongSources.Local || !HasUsableAlbumArtSource(item.AlbumArtUrl);
+
+    private void RefreshDeckAfterAlbumArtUpdate(string deckName, int itemId)
+    {
+        if (IsDeckDisplayItem(deckName, itemId))
+        {
+            RefreshActiveDeckQueue();
+            RefreshDeckDisplayProperties();
+        }
+    }
+
+    private void CacheDeckAlbumArtForCurrentQueues()
+    {
+        CacheDeckAlbumArtForQueue("Deck A");
+        CacheDeckAlbumArtForQueue("Deck B");
+    }
+
+    private void CacheDeckAlbumArtForQueue(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        var displayItemId = ResolveDeckDisplayItem(normalizedDeckName)?.Id;
+        if (displayItemId is not null)
+        {
+            DispatchAsync(() => CacheQueuedAlbumArtAsync(normalizedDeckName, displayItemId.Value));
         }
     }
 
     private List<DancePilotQueueItem> ActiveQueueList() => QueueForDeck(ActiveDeckName);
 
+    private List<DancePilotQueueItem> QueueViewQueueList() => QueueForDeck(QueueViewDeckName);
+
     private static string NormalizeDeckName(string deckName) =>
         string.Equals(deckName, "Deck B", StringComparison.OrdinalIgnoreCase) ? "Deck B" : "Deck A";
 
-    private static IEnumerable<T> Shuffle<T>(IEnumerable<T> items) =>
-        items.Select(item => new { Item = item, Order = Random.Shared.Next() })
-            .OrderBy(pair => pair.Order)
-            .Select(pair => pair.Item);
+    private static List<T> Shuffle<T>(IEnumerable<T> items)
+    {
+        var shuffled = items.ToList();
+        if (shuffled.Count < 2)
+        {
+            return shuffled;
+        }
 
-    private int NextDeckQueueId() => _deckAQueue.Count + _deckBQueue.Count + 1;
+        var original = shuffled.ToList();
+        for (var index = shuffled.Count - 1; index > 0; index--)
+        {
+            var swapIndex = Random.Shared.Next(index + 1);
+            (shuffled[index], shuffled[swapIndex]) = (shuffled[swapIndex], shuffled[index]);
+        }
+
+        if (shuffled.SequenceEqual(original))
+        {
+            var first = shuffled[0];
+            shuffled.RemoveAt(0);
+            shuffled.Add(first);
+        }
+
+        return shuffled;
+    }
+
+    private static void ReplaceCollection<T>(ObservableCollection<T> collection, IEnumerable<T> items)
+    {
+        collection.Clear();
+        foreach (var item in items)
+        {
+            collection.Add(item);
+        }
+    }
+
+    private int NextDeckQueueId() => _nextDeckQueueItemId++;
 
     public void MoveQueueItemsToDeck(IEnumerable<DancePilotQueueItem> items, string targetDeckName, int? beforeItemId = null)
     {
@@ -2744,11 +5060,11 @@ public sealed class MainPageViewModel : ObservableObject
         RenumberQueue(_deckBQueue, "Deck B");
 
         ActiveDeckName = normalizedTargetDeckName;
-        _selectedDeckQueueItemIds[normalizedTargetDeckName] = moving.First().Id;
         RefreshActiveDeckQueue();
         SpotifyOperationMessage = moving.Count == 1
             ? $"Moved {moving[0].Title} on {normalizedTargetDeckName}."
             : $"Moved {moving.Count} queued songs on {normalizedTargetDeckName}.";
+        QueueSessionStateSave();
     }
 
     public void RemoveQueueItem(DancePilotQueueItem item)
@@ -2763,10 +5079,36 @@ public sealed class MainPageViewModel : ObservableObject
         }
 
         RenumberQueue(queue, deckName);
-        _selectedDeckQueueItemIds[deckName] = queue.FirstOrDefault()?.Id;
+        if (_selectedDeckQueueItemIds.GetValueOrDefault(deckName) == item.Id)
+        {
+            _selectedDeckQueueItemIds[deckName] = null;
+        }
+
         ActiveDeckName = deckName;
         RefreshActiveDeckQueue();
         SpotifyOperationMessage = $"Removed {item.Title} from {deckName}.";
+        QueueSessionStateSave();
+    }
+
+    private void RemovePlayedQueueItem(string deckName, int itemId)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        var queue = QueueForDeck(normalizedDeckName);
+        var removed = queue.RemoveAll(existing => existing.Id == itemId);
+        if (removed == 0)
+        {
+            return;
+        }
+
+        RenumberQueue(queue, normalizedDeckName);
+        if (_selectedDeckQueueItemIds.GetValueOrDefault(normalizedDeckName) == itemId)
+        {
+            _selectedDeckQueueItemIds[normalizedDeckName] = queue.FirstOrDefault(item => item.Id == _playingDeckQueueItemId)?.Id
+                ?? queue.FirstOrDefault()?.Id;
+        }
+
+        RefreshActiveDeckQueue();
+        QueueSessionStateSave();
     }
 
     public void ClearDeckQueue(string deckName)
@@ -2779,6 +5121,7 @@ public sealed class MainPageViewModel : ObservableObject
             ActiveDeckName = normalizedDeckName;
             RefreshActiveDeckQueue();
             SpotifyOperationMessage = $"{normalizedDeckName} queue is already empty.";
+            QueueSessionStateSave();
             return;
         }
 
@@ -2787,6 +5130,7 @@ public sealed class MainPageViewModel : ObservableObject
         ActiveDeckName = normalizedDeckName;
         RefreshActiveDeckQueue();
         SpotifyOperationMessage = $"Cleared {removedCount} song(s) from {normalizedDeckName}. Add different tracks to this deck when ready.";
+        QueueSessionStateSave();
     }
 
     private static void RenumberQueue(List<DancePilotQueueItem> queue, string deckName)
@@ -2809,9 +5153,27 @@ public sealed class MainPageViewModel : ObservableObject
         }
 
         _selectedDeckQueueItemIds.TryGetValue(ActiveDeckName, out var selectedId);
-        SelectedActiveDeckQueueItem = ActiveDeckQueue.FirstOrDefault(item => item.Id == selectedId)
-            ?? ActiveDeckQueue.FirstOrDefault();
+        SelectedActiveDeckQueueItem = selectedId is not null
+            ? ActiveDeckQueue.FirstOrDefault(item => item.Id == selectedId)
+            : null;
+        RefreshQueueViewDeckQueue();
         UpdateNextUpFromDecks();
+    }
+
+    private void RefreshQueueViewDeckQueue()
+    {
+        QueueViewDeckQueue.Clear();
+        var position = 1;
+        foreach (var item in QueueViewQueueList().OrderBy(item => item.QueuePosition))
+        {
+            QueueViewDeckQueue.Add(item with { DeckName = QueueViewDeckName, QueuePosition = position++ });
+        }
+
+        _selectedDeckQueueItemIds.TryGetValue(QueueViewDeckName, out var selectedId);
+        SelectedQueueViewDeckQueueItem = selectedId is not null
+            ? QueueViewDeckQueue.FirstOrDefault(item => item.Id == selectedId)
+            : null;
+        OnPropertyChanged(nameof(QueueViewDeckCountDisplay));
     }
 
     private static void RefreshDeckQueueCollection(
@@ -2874,6 +5236,12 @@ public sealed class MainPageViewModel : ObservableObject
         try
         {
             _isPlaybackRefreshRunning = true;
+            if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
+            {
+                await RefreshLocalPlaybackCoreAsync(runAutopilot: true);
+                return;
+            }
+
             if (!await _spotifyService.IsConnectedAsync())
             {
                 return;
@@ -2897,6 +5265,114 @@ public sealed class MainPageViewModel : ObservableObject
         finally
         {
             _isPlaybackRefreshRunning = false;
+        }
+    }
+
+    private async Task HandleLocalMediaEndedAsync()
+    {
+        var completedDeckName = _playingDeckName;
+        var completedItemId = _playingDeckQueueItemId;
+        IsPlaybackPlaying = false;
+        SpotifyPlaybackStatus = "Local ended";
+        SpotifyProgressDisplay = SelectedLocalMusicTrack?.Duration is TimeSpan duration
+            ? $"{duration:m\\:ss} / {duration:m\\:ss}"
+            : SpotifyProgressDisplay;
+        SpotifyTimeRemaining = "0:00";
+        if (completedItemId is not null)
+        {
+            MarkDeckItemCompleted(completedDeckName, completedItemId.Value);
+        }
+        else
+        {
+            RefreshDeckDisplayProperties();
+        }
+
+        if (!DeckTransitionEnabled || _isTransitionAdvanceRunning || completedItemId is null)
+        {
+            if (completedItemId is not null)
+            {
+                ClearEndedPlayingDeckItemIfCurrent(completedDeckName, completedItemId.Value);
+            }
+
+            return;
+        }
+
+        var transitioned = await TryStartTransitionTargetAsync(skipFadeOut: true);
+        if (!transitioned)
+        {
+            ClearEndedPlayingDeckItemIfCurrent(completedDeckName, completedItemId.Value);
+        }
+
+        SpotifyOperationMessage = transitioned
+            ? $"Deck transition started the next track on {ActiveDeckName}."
+            : RemovePlayedQueueItems
+                ? "Local song ended. No next queued song is available on this deck."
+                : "Local song ended. Queue loop is ready, but no playable track was found.";
+    }
+
+    private async Task RefreshLocalPlaybackCoreAsync(bool runAutopilot)
+    {
+        var session = _localMediaPlayer.PlaybackSession;
+        var duration = session.NaturalDuration > TimeSpan.Zero
+            ? session.NaturalDuration
+            : SelectedLocalMusicTrack?.Duration;
+        var position = session.Position < TimeSpan.Zero ? TimeSpan.Zero : session.Position;
+
+        IsPlaybackPlaying = session.PlaybackState is MediaPlaybackState.Playing
+            or MediaPlaybackState.Buffering
+            or MediaPlaybackState.Opening;
+
+        if (duration is TimeSpan durationValue && durationValue > TimeSpan.Zero)
+        {
+            SeekPositionMaximumSeconds = durationValue.TotalSeconds;
+            if (!_isSeekPositionChanging)
+            {
+                SeekPositionSeconds = Math.Clamp(position.TotalSeconds, 0, SeekPositionMaximumSeconds);
+            }
+
+            SpotifyProgressDisplay = $"{position:m\\:ss} / {durationValue:m\\:ss}";
+            SpotifyTimeRemaining = $"{(durationValue - position > TimeSpan.Zero ? durationValue - position : TimeSpan.Zero):m\\:ss}";
+        }
+        else
+        {
+            if (!_isSeekPositionChanging)
+            {
+                SeekPositionSeconds = Math.Max(0, position.TotalSeconds);
+            }
+
+            SpotifyProgressDisplay = $"{position:m\\:ss} / --:--";
+            SpotifyTimeRemaining = "--:--";
+        }
+
+        RefreshDeckDisplayProperties();
+
+        if (!runAutopilot
+            || !DeckTransitionEnabled
+            || _isTransitionAdvanceRunning
+            || _playingDeckQueueItemId is null
+            || duration is not TimeSpan knownDuration
+            || knownDuration <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        var remainingSeconds = Math.Max(0, (knownDuration - position).TotalSeconds);
+        var transitionTriggerSeconds = AlwaysFadeSongs && StartTransitionOnFade
+            ? FadeOutSeconds + TransitionOverlapSeconds
+            : TransitionOverlapSeconds;
+        var isNearEnd = remainingSeconds <= transitionTriggerSeconds;
+        var hasEnded = session.PlaybackState is MediaPlaybackState.None or MediaPlaybackState.Paused
+            && remainingSeconds <= LateTransitionSkipFadeSeconds;
+
+        if (isNearEnd || hasEnded)
+        {
+            var transitioned = await TryStartTransitionTargetAsync(
+                skipFadeOut: hasEnded || remainingSeconds <= LateTransitionSkipFadeSeconds,
+                fadeOutSeconds: CreateTransitionFadeOutDuration(remainingSeconds));
+            if (transitioned)
+            {
+                SpotifyOperationMessage = $"Deck transition started the next track on {ActiveDeckName}.";
+            }
         }
     }
 
@@ -2976,13 +5452,13 @@ public sealed class MainPageViewModel : ObservableObject
         }
     }
 
-    private async Task RefreshPlaybackCollectionsAsync()
+    private async Task RefreshPlaybackCollectionsAsync(bool loadImportedTracks = true)
     {
-        await LoadImportedSpotifyPlaylistsCoreAsync();
+        await LoadImportedSpotifyPlaylistsCoreAsync(loadTracksForSelection: loadImportedTracks);
         await RefreshQueueCoreAsync();
     }
 
-    private async Task LoadImportedSpotifyPlaylistsCoreAsync()
+    private async Task LoadImportedSpotifyPlaylistsCoreAsync(bool loadTracksForSelection = true)
     {
         var playlists = await _spotifyLibraryRepository.GetImportedPlaylistsAsync();
         ImportedSpotifyPlaylists.Clear();
@@ -2992,9 +5468,14 @@ public sealed class MainPageViewModel : ObservableObject
         }
 
         SelectedImportedSpotifyPlaylist = ImportedSpotifyPlaylists.FirstOrDefault();
-        if (SelectedImportedSpotifyPlaylist is not null)
+        if (loadTracksForSelection && SelectedImportedSpotifyPlaylist is not null)
         {
             await LoadImportedPlaylistTracksCoreAsync();
+        }
+        else
+        {
+            ImportedSpotifyTracks.Clear();
+            SelectedImportedSpotifyTrack = null;
         }
     }
 
@@ -3199,8 +5680,19 @@ public sealed class MainPageViewModel : ObservableObject
             _ => playbackMode
         };
 
-    private static ImageSource CreateAlbumArtSource(string? albumArtSource, string fallbackSource) =>
-        new BitmapImage(new Uri(NormalizeAlbumArtSource(albumArtSource, fallbackSource)));
+    private static ImageSource CreateAlbumArtSource(string? albumArtSource, string fallbackSource)
+    {
+        var normalized = NormalizeAlbumArtSource(albumArtSource, fallbackSource);
+        try
+        {
+            return new BitmapImage(new Uri(normalized));
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write($"Album art source rejected: {albumArtSource ?? "<empty>"}; {ex.Message}");
+            return new BitmapImage(new Uri(NormalizeAlbumArtSource(fallbackSource, DefaultLocalAlbumArtPath)));
+        }
+    }
 
     private static ImageSource CreateAlbumArtSource(string? albumArtSource, ImageSource existingSource, string fallbackSource) =>
         string.IsNullOrWhiteSpace(albumArtSource)
@@ -3209,18 +5701,43 @@ public sealed class MainPageViewModel : ObservableObject
 
     private static string NormalizeAlbumArtSource(string? albumArtSource, string fallbackSource)
     {
-        var source = string.IsNullOrWhiteSpace(albumArtSource)
-            ? fallbackSource
-            : albumArtSource.Trim();
+        var fallback = NormalizeAlbumArtSourceCore(fallbackSource, null) ?? DefaultLocalAlbumArtPath;
+        return NormalizeAlbumArtSourceCore(albumArtSource, fallback) ?? fallback;
+    }
 
-        if (source.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+    private static string? NormalizeAlbumArtSourceCore(string? albumArtSource, string? fallbackSource)
+    {
+        if (string.IsNullOrWhiteSpace(albumArtSource))
         {
-            return $"ms-appx:///{source}";
+            return fallbackSource;
         }
 
-        return Uri.TryCreate(source, UriKind.Absolute, out _)
-            ? source
-            : fallbackSource;
+        var source = albumArtSource.Trim();
+        if (source.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase)
+            || source.StartsWith(@"Assets\", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"ms-appx:///{source.Replace('\\', '/')}";
+        }
+
+        if (Uri.TryCreate(source, UriKind.Absolute, out var uri))
+        {
+            if (uri.Scheme is "http" or "https" or "ms-appx")
+            {
+                return uri.AbsoluteUri;
+            }
+
+            if (uri.Scheme == "file")
+            {
+                return File.Exists(uri.LocalPath) ? uri.AbsoluteUri : fallbackSource;
+            }
+        }
+
+        if (Path.IsPathFullyQualified(source) && File.Exists(source))
+        {
+            return new Uri(source).AbsoluteUri;
+        }
+
+        return fallbackSource;
     }
 
     private static string NormalizeSource(string source) =>
@@ -3299,26 +5816,29 @@ public sealed class MainPageViewModel : ObservableObject
     private async Task<bool> HasPlaybackScopesAsync() =>
         (await _spotifyService.GetMissingScopesAsync(SpotifyScopes.PlaybackControl)).Count == 0;
 
-    private async Task RunSpotifyOperationAsync(Func<Task> operation)
+    private async Task<bool> RunSpotifyOperationAsync(Func<Task> operation)
     {
         if (IsSpotifyBusy)
         {
-            return;
+            return false;
         }
 
         try
         {
             IsSpotifyBusy = true;
             await operation();
+            return true;
         }
         catch (SpotifyApiException ex)
         {
             StartupLog.Write($"Spotify API error kind={ex.Kind} status={ex.StatusCode} uri={ex.RequestUri} body={ex.ErrorBody}");
             SpotifyOperationMessage = ToFriendlySpotifyMessage(ex);
+            return false;
         }
         catch (Exception ex)
         {
             SpotifyOperationMessage = $"Spotify operation failed: {ex.Message}";
+            return false;
         }
         finally
         {
@@ -3357,9 +5877,51 @@ public sealed class MainPageViewModel : ObservableObject
     }
 }
 
-public sealed record WaveBar(double Height, Brush Fill);
+public sealed record WaveBar(double Height, Brush Fill)
+{
+    public double UpperHeight { get; init; } = Height;
 
-public sealed record FrequencyBand(string Label, string Range, double Level, Brush Fill);
+    public double LowerHeight { get; init; } = Height;
+
+    public Brush UpperFill { get; init; } = Fill;
+
+    public Brush LowerFill { get; init; } = Fill;
+
+    public double PeakHeight { get; init; } = Height;
+
+    public Brush PeakFill { get; init; } = Fill;
+
+    public Thickness PeakMargin { get; init; } = new(0);
+
+    public double LowHeight { get; init; } = Height;
+
+    public double MidHeight { get; init; } = 0;
+
+    public double HighHeight { get; init; } = 0;
+
+    public double BeatHeight { get; init; } = 0;
+
+    public Brush LowFill { get; init; } = Fill;
+
+    public Brush MidFill { get; init; } = Fill;
+
+    public Brush HighFill { get; init; } = Fill;
+
+    public Brush BeatFill { get; init; } = Fill;
+}
+
+public sealed record DjWaveformFrame(double Low, double Mid, double High, double Beat);
+
+public sealed record FrequencyBand(
+    string Label,
+    string Range,
+    double DeckALevel,
+    double DeckBLevel,
+    double PeakLevel,
+    Brush DeckAFill,
+    Brush DeckBFill,
+    Brush PeakFill,
+    Brush GridFill);
 
 public sealed record EnergySegment(Brush Fill);
 

@@ -17,6 +17,7 @@
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <EnableMsixTooling>false</EnableMsixTooling>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
@@ -35,6 +36,7 @@
     <Content Include="Assets\AlbumRockinRobin.png" />
     <Content Include="Assets\AlbumCountryRoad.png" />
     <Content Include="Assets\AlbumDanceFloor.png" />
+    <Content Include="Assets\Branding\*.*" />
     <Content Include="Assets\AlbumCovers\*.jpg" />
   </ItemGroup>
 

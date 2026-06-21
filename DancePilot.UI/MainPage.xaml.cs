@@ -8,6 +8,7 @@ using DancePilot.Core.Spotify;
 using Microsoft.UI;
 using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage.Pickers;
 using Windows.System;
 
 // To learn more about WinUI, the WinUI project structure,
@@ -22,6 +23,9 @@ public sealed partial class MainPage : Page
 {
     public MainPageViewModel ViewModel { get; } = CreateViewModel();
     private IReadOnlyList<object> _draggedItems = [];
+    private ListView? _lastDragSourceList;
+    private DateTimeOffset _lastHandledDropAt = DateTimeOffset.MinValue;
+    private string? _lastHandledDropSignature;
 
     public MainPage()
     {
@@ -32,8 +36,20 @@ public sealed partial class MainPage : Page
         PlaybackPositionSlider.KeyUp += PlaybackPositionSlider_KeyUp;
         VolumeSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(VolumeSlider_PointerReleased), true);
         VolumeSlider.KeyUp += VolumeSlider_KeyUp;
+        DeckAVolumeSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(DeckAVolumeSlider_PointerReleased), true);
+        DeckAVolumeSlider.KeyUp += DeckAVolumeSlider_KeyUp;
+        DeckBVolumeSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(DeckBVolumeSlider_PointerReleased), true);
+        DeckBVolumeSlider.KeyUp += DeckBVolumeSlider_KeyUp;
+        Unloaded += MainPage_Unloaded;
         StartupLog.Write("MainPage constructor complete");
     }
+
+    private async void MainPage_Unloaded(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.SaveSessionStateNowAsync();
+    }
+
+    public Task ShutdownAsync() => ViewModel.ShutdownAsync();
 
     private static MainPageViewModel CreateViewModel()
     {
@@ -108,8 +124,14 @@ public sealed partial class MainPage : Page
             .ToList();
         var localTracks = GetSelectedItems<LocalMusicTrack>(LocalMusicList);
         var playlists = GetSelectedItems<SpotifyPlaylistSummary>(SpotifyPlaylistsList);
+        var localPlaylists = GetSelectedItems<LocalMusicPlaylist>(LocalPlaylistsList);
 
-        await ViewModel.QueueSourceSelectionToDeckAsync(deckName, spotifyTracks, localTracks, playlists);
+        await ViewModel.QueueSourceSelectionToDeckAsync(
+            deckName,
+            spotifyTracks,
+            localTracks,
+            playlists,
+            localPlaylists: localPlaylists);
     }
 
     private static IReadOnlyList<T> GetSelectedItems<T>(ListView list)
@@ -125,14 +147,18 @@ public sealed partial class MainPage : Page
 
     private void SourceList_DragItemsStarting(object sender, DragItemsStartingEventArgs e)
     {
+        _lastDragSourceList = sender as ListView;
         _draggedItems = ResolveDraggedItems(sender, e);
+        StartupLog.Write($"Source drag started from {DescribeList(_lastDragSourceList)} with {_draggedItems.Count} item(s): {DescribeItems(_draggedItems)}");
         e.Data.RequestedOperation = DataPackageOperation.Copy;
         e.Data.SetText("DancePilot source selection");
     }
 
     private void QueueList_DragItemsStarting(object sender, DragItemsStartingEventArgs e)
     {
+        _lastDragSourceList = sender as ListView;
         _draggedItems = ResolveDraggedItems(sender, e);
+        StartupLog.Write($"Queue drag started from {DescribeList(_lastDragSourceList)} with {_draggedItems.Count} item(s): {DescribeItems(_draggedItems)}");
         e.Data.RequestedOperation = DataPackageOperation.Move;
         e.Data.SetText("DancePilot queue selection");
     }
@@ -149,16 +175,20 @@ public sealed partial class MainPage : Page
 
     private void DeckDropTarget_DragOver(object sender, DragEventArgs e)
     {
-        e.AcceptedOperation = _draggedItems.OfType<DancePilotQueueItem>().Any()
+        var dropItems = ResolveDropItems();
+        e.AcceptedOperation = dropItems.OfType<DancePilotQueueItem>().Any()
             ? DataPackageOperation.Move
             : DataPackageOperation.Copy;
+        e.Handled = true;
     }
 
     private void QueueList_DragOver(object sender, DragEventArgs e)
     {
-        e.AcceptedOperation = _draggedItems.OfType<DancePilotQueueItem>().Any()
+        var dropItems = ResolveDropItems();
+        e.AcceptedOperation = dropItems.OfType<DancePilotQueueItem>().Any()
             ? DataPackageOperation.Move
             : DataPackageOperation.Copy;
+        e.Handled = true;
     }
 
     private async void DeckADropTarget_Drop(object sender, DragEventArgs e)
@@ -183,18 +213,37 @@ public sealed partial class MainPage : Page
 
     private async void SongQueueList_Drop(object sender, DragEventArgs e)
     {
-        await HandleDropToDeckAsync(ViewModel.ActiveDeckName, e);
+        await HandleDropToDeckAsync(ViewModel.QueueViewDeckName, e);
     }
 
     private async Task HandleDropToDeckAsync(string deckName, DragEventArgs e)
     {
-        if (_draggedItems.Count == 0)
+        e.Handled = true;
+
+        var draggedItems = ResolveDropItems().ToList();
+        _draggedItems = [];
+        _lastDragSourceList = null;
+
+        StartupLog.Write($"Drop to {deckName}: {draggedItems.Count} item(s): {DescribeItems(draggedItems)}");
+        if (draggedItems.Count == 0)
         {
             return;
         }
 
         var targetItem = FindQueueItemFromDropTarget(e.OriginalSource as DependencyObject);
-        var queueItems = _draggedItems.OfType<DancePilotQueueItem>().ToList();
+        var dropSignature = CreateDropSignature(deckName, targetItem?.Id, draggedItems);
+        var now = DateTimeOffset.UtcNow;
+        if (string.Equals(_lastHandledDropSignature, dropSignature, StringComparison.Ordinal)
+            && now - _lastHandledDropAt < TimeSpan.FromMilliseconds(750))
+        {
+            StartupLog.Write($"Ignored duplicate routed drop to {deckName}: {DescribeItems(draggedItems)}");
+            return;
+        }
+
+        _lastHandledDropSignature = dropSignature;
+        _lastHandledDropAt = now;
+
+        var queueItems = draggedItems.OfType<DancePilotQueueItem>().ToList();
         if (queueItems.Count > 0)
         {
             ViewModel.MoveQueueItemsToDeck(queueItems, deckName, targetItem?.Id);
@@ -203,14 +252,111 @@ public sealed partial class MainPage : Page
         {
             await ViewModel.QueueSourceSelectionToDeckAsync(
                 deckName,
-                _draggedItems.OfType<SpotifyTrackMetadata>(),
-                _draggedItems.OfType<LocalMusicTrack>(),
-                _draggedItems.OfType<SpotifyPlaylistSummary>());
+                draggedItems.OfType<SpotifyTrackMetadata>(),
+                draggedItems.OfType<LocalMusicTrack>(),
+                draggedItems.OfType<SpotifyPlaylistSummary>(),
+                targetItem?.Id,
+                insertAtTop: targetItem is null,
+                localPlaylists: draggedItems.OfType<LocalMusicPlaylist>());
+        }
+    }
+
+    private static string CreateDropSignature(string deckName, int? targetItemId, IEnumerable<object> items) =>
+        $"{deckName}|{targetItemId?.ToString() ?? "end"}|{string.Join("|", items.Select(CreateDropItemSignature).Order(StringComparer.Ordinal))}";
+
+    private static string CreateDropItemSignature(object item) =>
+        item switch
+        {
+            DancePilotQueueItem queueItem => $"queue:{queueItem.Id}:{queueItem.DeckName}",
+            SpotifyTrackMetadata track => $"spotify-track:{track.SpotifyUri ?? track.SpotifyTrackId ?? track.Title}",
+            SpotifyPlaylistSummary playlist => $"spotify-playlist:{playlist.SpotifyPlaylistId ?? playlist.Name}",
+            LocalMusicTrack track => $"local-track:{track.FilePath}",
+            LocalMusicPlaylist playlist => $"local-playlist:{playlist.Id}",
+            _ => $"{item.GetType().FullName}:{item.GetHashCode()}"
+        };
+
+    private IReadOnlyList<object> ResolveDropItems()
+    {
+        if (_draggedItems.Count > 0)
+        {
+            return _draggedItems;
         }
 
-        _draggedItems = [];
-        e.Handled = true;
+        var sourceItems = ResolveSelectedItemsFromList(_lastDragSourceList);
+        if (sourceItems.Count > 0)
+        {
+            return sourceItems;
+        }
+
+        sourceItems = ResolveSelectedSourceItems();
+        if (sourceItems.Count > 0)
+        {
+            return sourceItems;
+        }
+
+        return ResolveSelectedQueueItems();
     }
+
+    private IReadOnlyList<object> ResolveSelectedSourceItems()
+    {
+        var items = new List<object>();
+        items.AddRange(GetSelectedItems<SpotifyTrackMetadata>(SpotifyPreviewTracksList).Cast<object>());
+        items.AddRange(GetSelectedItems<SpotifyTrackMetadata>(SpotifySearchResultsList).Cast<object>());
+        items.AddRange(GetSelectedItems<SpotifyPlaylistSummary>(SpotifyPlaylistsList).Cast<object>());
+        items.AddRange(GetSelectedItems<LocalMusicTrack>(LocalMusicList).Cast<object>());
+        items.AddRange(GetSelectedItems<LocalMusicPlaylist>(LocalPlaylistsList).Cast<object>());
+        return items.Distinct().ToList();
+    }
+
+    private IReadOnlyList<object> ResolveSelectedQueueItems()
+    {
+        var items = new List<object>();
+        items.AddRange(GetSelectedItems<DancePilotQueueItem>(DeckAQueueList).Cast<object>());
+        items.AddRange(GetSelectedItems<DancePilotQueueItem>(DeckBQueueList).Cast<object>());
+        items.AddRange(GetSelectedItems<DancePilotQueueItem>(SongQueueList).Cast<object>());
+        return items.Distinct().ToList();
+    }
+
+    private IReadOnlyList<object> ResolveSelectedItemsFromList(ListView? list)
+    {
+        if (list is null)
+        {
+            return [];
+        }
+
+        if (ReferenceEquals(list, SpotifyPreviewTracksList) || ReferenceEquals(list, SpotifySearchResultsList))
+        {
+            return GetSelectedItems<SpotifyTrackMetadata>(list).Cast<object>().ToList();
+        }
+
+        if (ReferenceEquals(list, SpotifyPlaylistsList))
+        {
+            return GetSelectedItems<SpotifyPlaylistSummary>(list).Cast<object>().ToList();
+        }
+
+        if (ReferenceEquals(list, LocalMusicList))
+        {
+            return GetSelectedItems<LocalMusicTrack>(list).Cast<object>().ToList();
+        }
+
+        if (ReferenceEquals(list, LocalPlaylistsList))
+        {
+            return GetSelectedItems<LocalMusicPlaylist>(list).Cast<object>().ToList();
+        }
+
+        if (ReferenceEquals(list, DeckAQueueList) || ReferenceEquals(list, DeckBQueueList) || ReferenceEquals(list, SongQueueList))
+        {
+            return GetSelectedItems<DancePilotQueueItem>(list).Cast<object>().ToList();
+        }
+
+        return [];
+    }
+
+    private static string DescribeList(ListView? list) =>
+        list?.Name ?? "unknown list";
+
+    private static string DescribeItems(IEnumerable<object> items) =>
+        string.Join(", ", items.Select(item => item.GetType().Name).Distinct());
 
     private string ResolveDeckNameFromQueueList(ListView list)
     {
@@ -224,7 +370,7 @@ public sealed partial class MainPage : Page
             return "Deck B";
         }
 
-        return ViewModel.ActiveDeckName;
+        return ViewModel.QueueViewDeckName;
     }
 
     private static DancePilotQueueItem? FindQueueItemFromDropTarget(DependencyObject? source)
@@ -340,6 +486,210 @@ public sealed partial class MainPage : Page
     private async Task CommitVolumeSliderAsync()
     {
         await ViewModel.CommitVolumeChangeAsync();
+    }
+
+    private async void DeckAVolumeSlider_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        await CommitDeckVolumeSliderAsync("Deck A");
+    }
+
+    private async void DeckAVolumeSlider_KeyUp(object sender, KeyRoutedEventArgs e)
+    {
+        if (IsSliderCommitKey(e.Key))
+        {
+            await CommitDeckVolumeSliderAsync("Deck A");
+            e.Handled = true;
+        }
+    }
+
+    private async void DeckBVolumeSlider_PointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        await CommitDeckVolumeSliderAsync("Deck B");
+    }
+
+    private async void DeckBVolumeSlider_KeyUp(object sender, KeyRoutedEventArgs e)
+    {
+        if (IsSliderCommitKey(e.Key))
+        {
+            await CommitDeckVolumeSliderAsync("Deck B");
+            e.Handled = true;
+        }
+    }
+
+    private async Task CommitDeckVolumeSliderAsync(string deckName)
+    {
+        await ViewModel.CommitDeckVolumeChangeAsync(deckName);
+    }
+
+    private static bool IsSliderCommitKey(VirtualKey key) =>
+        key is VirtualKey.Enter
+            or VirtualKey.Space
+            or VirtualKey.Left
+            or VirtualKey.Right
+            or VirtualKey.Up
+            or VirtualKey.Down
+            or VirtualKey.Home
+            or VirtualKey.End
+            or VirtualKey.PageUp
+            or VirtualKey.PageDown;
+
+    private async void BrowseLocalMusicFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var picker = new FolderPicker
+        {
+            SuggestedStartLocation = PickerLocationId.MusicLibrary
+        };
+        picker.FileTypeFilter.Add("*");
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, App.WindowHandle);
+
+        var folder = await picker.PickSingleFolderAsync();
+        if (folder is null)
+        {
+            return;
+        }
+
+        await ViewModel.LoadLocalMusicFromFolderAsync(folder.Path);
+    }
+
+    private async void LocalPlaylistMenu_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.LoadLocalPlaylistsCommand.ExecuteAsync(null);
+
+        var nameBox = new TextBox
+        {
+            Header = "Playlist Name",
+            PlaceholderText = "New local playlist",
+            MinHeight = 40
+        };
+
+        var playlistList = new ListView
+        {
+            ItemsSource = ViewModel.LocalMusicPlaylists,
+            SelectedItem = ViewModel.SelectedLocalMusicPlaylist,
+            DisplayMemberPath = "DisplayName",
+            SelectionMode = ListViewSelectionMode.Single,
+            MinHeight = 160,
+            MaxHeight = 220
+        };
+        playlistList.SelectionChanged += (_, _) =>
+        {
+            if (playlistList.SelectedItem is LocalMusicPlaylist playlist)
+            {
+                ViewModel.SelectedLocalMusicPlaylist = playlist;
+            }
+        };
+
+        var statusText = new TextBlock
+        {
+            Text = ViewModel.LocalPlaylistStatus,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = new SolidColorBrush(ColorHelper.FromArgb(255, 181, 192, 201))
+        };
+
+        async Task RefreshMenuStatusAsync()
+        {
+            await ViewModel.LoadLocalPlaylistsCommand.ExecuteAsync(null);
+            playlistList.SelectedItem = ViewModel.SelectedLocalMusicPlaylist;
+            statusText.Text = ViewModel.LocalPlaylistStatus;
+        }
+
+        var createButton = new Button { Content = "CREATE / SELECT", MinHeight = 38 };
+        createButton.Click += async (_, _) =>
+        {
+            var playlist = await ViewModel.CreateLocalPlaylistAsync(nameBox.Text);
+            if (playlist is not null)
+            {
+                playlistList.SelectedItem = ViewModel.SelectedLocalMusicPlaylist;
+            }
+
+            statusText.Text = ViewModel.LocalPlaylistStatus;
+        };
+
+        var refreshButton = new Button { Content = "REFRESH", MinHeight = 38 };
+        refreshButton.Click += async (_, _) => await RefreshMenuStatusAsync();
+
+        var deleteButton = new Button { Content = "DELETE", MinHeight = 38 };
+        deleteButton.Click += async (_, _) =>
+        {
+            await ViewModel.DeleteSelectedLocalPlaylistCommand.ExecuteAsync(null);
+            playlistList.SelectedItem = ViewModel.SelectedLocalMusicPlaylist;
+            statusText.Text = ViewModel.LocalPlaylistStatus;
+        };
+
+        var addSelectedButton = new Button { Content = "ADD SELECTED SONGS", MinHeight = 38 };
+        addSelectedButton.Click += async (_, _) =>
+        {
+            await ViewModel.AddLocalTracksToSelectedPlaylistAsync(GetSelectedItems<LocalMusicTrack>(LocalMusicList));
+            playlistList.SelectedItem = ViewModel.SelectedLocalMusicPlaylist;
+            statusText.Text = ViewModel.LocalPlaylistStatus;
+        };
+
+        var addFilteredButton = new Button { Content = "ADD FILTERED SONGS", MinHeight = 38 };
+        addFilteredButton.Click += async (_, _) =>
+        {
+            await ViewModel.AddFilteredLocalMusicToPlaylistCommand.ExecuteAsync(null);
+            playlistList.SelectedItem = ViewModel.SelectedLocalMusicPlaylist;
+            statusText.Text = ViewModel.LocalPlaylistStatus;
+        };
+
+        var addDeckAButton = new Button { Content = "ADD TO DECK A", MinHeight = 38 };
+        addDeckAButton.Click += async (_, _) =>
+        {
+            await ViewModel.QueueSelectedLocalPlaylistToDeckAsync("Deck A");
+            statusText.Text = ViewModel.LocalPlaylistStatus;
+        };
+
+        var addDeckBButton = new Button { Content = "ADD TO DECK B", MinHeight = 38 };
+        addDeckBButton.Click += async (_, _) =>
+        {
+            await ViewModel.QueueSelectedLocalPlaylistToDeckAsync("Deck B");
+            statusText.Text = ViewModel.LocalPlaylistStatus;
+        };
+
+        static Grid ButtonGrid(params Button[] buttons)
+        {
+            var grid = new Grid { ColumnSpacing = 8 };
+            for (var index = 0; index < buttons.Length; index++)
+            {
+                grid.ColumnDefinitions.Add(new ColumnDefinition());
+                Grid.SetColumn(buttons[index], index);
+                grid.Children.Add(buttons[index]);
+            }
+
+            return grid;
+        }
+
+        var content = new StackPanel
+        {
+            Spacing = 12,
+            MaxWidth = 680
+        };
+        content.Children.Add(nameBox);
+        content.Children.Add(ButtonGrid(createButton, refreshButton, deleteButton));
+        content.Children.Add(new TextBlock
+        {
+            Text = "Saved Local Playlists",
+            FontSize = 16,
+            FontWeight = Microsoft.UI.Text.FontWeights.Bold
+        });
+        content.Children.Add(playlistList);
+        content.Children.Add(ButtonGrid(addSelectedButton, addFilteredButton));
+        content.Children.Add(ButtonGrid(addDeckAButton, addDeckBButton));
+        content.Children.Add(statusText);
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "Local Playlist Menu",
+            Content = new ScrollViewer
+            {
+                Content = content,
+                MaxHeight = 620
+            },
+            CloseButtonText = "Close"
+        };
+
+        await dialog.ShowAsync();
     }
 
     private async void SettingsButton_Click(object sender, RoutedEventArgs e)

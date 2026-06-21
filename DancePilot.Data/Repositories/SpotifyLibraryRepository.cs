@@ -58,10 +58,23 @@ public sealed class SpotifyLibraryRepository
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT s.external_id, s.title, s.artist, s.album, s.duration_ms, s.external_uri, s.external_url, s.popularity
+            SELECT s.external_id,
+                   s.title,
+                   s.artist,
+                   s.album,
+                   s.duration_ms,
+                   s.external_uri,
+                   s.external_url,
+                   s.popularity,
+                   COALESCE(s.bpm, local.bpm) AS bpm,
+                   COALESCE(s.song_key, local.song_key) AS song_key,
+                   s.album_art_path
             FROM spotify_playlist_tracks pt
             INNER JOIN songs s
                 ON s.id = pt.song_id
+            LEFT JOIN songs local
+                ON local.id = s.likely_local_match_song_id
+                AND local.source = 'local'
             WHERE pt.spotify_playlist_id = $spotify_playlist_id
             ORDER BY pt.position, pt.id;
             """;
@@ -80,7 +93,10 @@ public sealed class SpotifyLibraryRepository
                 DurationMs = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
                 SpotifyUri = reader.IsDBNull(5) ? null : reader.GetString(5),
                 ExternalUrl = reader.IsDBNull(6) ? null : reader.GetString(6),
-                Popularity = reader.IsDBNull(7) ? null : reader.GetInt32(7)
+                Popularity = reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                BPM = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                MusicalKey = reader.IsDBNull(9) ? null : reader.GetString(9),
+                AlbumArtUrl = reader.IsDBNull(10) ? null : reader.GetString(10)
             });
         }
 

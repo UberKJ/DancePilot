@@ -41,6 +41,7 @@ public sealed class SpotifyImportRepositoryTests
                     Title = "Sweet Caroline",
                     Artist = "Neil Diamond",
                     Album = "Brother Love's Travelling Salvation Show",
+                    AlbumArtUrl = "https://image.example/sweet-caroline.jpg",
                     DurationMs = 201_500,
                     SpotifyUri = "spotify:track:track-456",
                     ExternalUrl = "https://open.spotify.com/track/track-456",
@@ -62,7 +63,7 @@ public sealed class SpotifyImportRepositoryTests
 
             await using var songCommand = connection.CreateCommand();
             songCommand.CommandText = """
-                SELECT external_id, external_uri, external_url, album, duration_ms, popularity, imported_from_playlist_id, likely_local_match_song_id
+                SELECT external_id, external_uri, external_url, album, duration_ms, popularity, imported_from_playlist_id, likely_local_match_song_id, album_art_path
                 FROM songs
                 WHERE source = 'spotify';
                 """;
@@ -76,10 +77,18 @@ public sealed class SpotifyImportRepositoryTests
             Assert.Equal(78, songReader.GetInt32(5));
             Assert.Equal("playlist-123", songReader.GetString(6));
             Assert.Equal(1, songReader.GetInt32(7));
+            Assert.Equal("https://image.example/sweet-caroline.jpg", songReader.GetString(8));
             await songReader.DisposeAsync();
 
             Assert.Equal(1, await CountRowsAsync(connection, "spotify_playlists"));
             Assert.Equal(1, await CountRowsAsync(connection, "spotify_playlist_tracks"));
+
+            var libraryRepository = new SpotifyLibraryRepository(connectionFactory);
+            var importedTracks = await libraryRepository.GetImportedPlaylistTracksAsync("playlist-123");
+            var importedTrack = Assert.Single(importedTracks);
+            Assert.Equal(128, importedTrack.BPM);
+            Assert.Equal("A", importedTrack.MusicalKey);
+            Assert.Equal("https://image.example/sweet-caroline.jpg", importedTrack.AlbumArtUrl);
         }
         finally
         {
@@ -98,8 +107,8 @@ public sealed class SpotifyImportRepositoryTests
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO songs (id, title, artist, duration, duration_ms, source)
-            VALUES (1, 'Sweet Caroline', 'Neil Diamond', '00:03:21', 201000, 'local');
+            INSERT INTO songs (id, title, artist, duration, duration_ms, bpm, song_key, source)
+            VALUES (1, 'Sweet Caroline', 'Neil Diamond', '00:03:21', 201000, 128, 'A', 'local');
             """;
         await command.ExecuteNonQueryAsync();
     }

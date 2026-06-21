@@ -128,6 +128,51 @@ public sealed class DancePilotDatabaseMigrator
             CREATE INDEX IF NOT EXISTS ix_queue_status_position
             ON queue(status, queue_position);
             """, cancellationToken);
+
+        await ExecuteAsync(connection, """
+            CREATE TABLE IF NOT EXISTS album_art_cache (
+                cache_key TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                external_uri TEXT,
+                title TEXT,
+                artist TEXT,
+                original_uri TEXT,
+                content_type TEXT,
+                image_bytes BLOB,
+                local_file_path TEXT,
+                updated_at TEXT
+            );
+            """, cancellationToken);
+
+        await ExecuteAsync(connection, """
+            CREATE INDEX IF NOT EXISTS ix_album_art_cache_source_external_uri
+            ON album_art_cache(source, external_uri);
+            """, cancellationToken);
+
+        await ExecuteAsync(connection, """
+            CREATE TABLE IF NOT EXISTS local_playlists (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            """, cancellationToken);
+
+        await ExecuteAsync(connection, """
+            CREATE TABLE IF NOT EXISTS local_playlist_tracks (
+                playlist_id INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                added_at TEXT NOT NULL,
+                PRIMARY KEY (playlist_id, file_path),
+                FOREIGN KEY (playlist_id) REFERENCES local_playlists(id) ON DELETE CASCADE
+            );
+            """, cancellationToken);
+
+        await ExecuteAsync(connection, """
+            CREATE INDEX IF NOT EXISTS ix_local_playlist_tracks_playlist_position
+            ON local_playlist_tracks(playlist_id, position);
+            """, cancellationToken);
     }
 
     private static async Task AddColumnIfMissingAsync(

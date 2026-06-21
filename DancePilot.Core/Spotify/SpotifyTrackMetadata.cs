@@ -32,6 +32,22 @@ public sealed record SpotifyTrackMetadata
 
     public string PopularityDisplay => Popularity?.ToString() ?? "-";
 
-    public string MixDisplay =>
-        $"{(BPM is null ? "--" : BPM.Value.ToString())} BPM / {(!string.IsNullOrWhiteSpace(MusicalKey) ? MusicalKey : "--")}";
+    public string MixDisplay
+    {
+        get
+        {
+            var mixParts = new List<string>();
+            if (BPM is not null)
+            {
+                mixParts.Add($"{BPM.Value} BPM");
+            }
+
+            if (!string.IsNullOrWhiteSpace(MusicalKey))
+            {
+                mixParts.Add(MusicalKey.Trim());
+            }
+
+            return string.Join(" / ", mixParts);
+        }
+    }
 }
