@@ -164,6 +164,7 @@ public sealed class MainPageViewModel : ObservableObject
     private bool _isAutoPilotEnabled = true;
     private bool _isShuttingDown;
     private bool _isRestoringSessionState;
+    private bool _suppressLocalMusicAutoLoad;
     private bool _hasLoadedSessionState;
     private CancellationTokenSource? _sessionStateSaveDebounce;
     private int _analyzerFrame;
@@ -763,7 +764,9 @@ public sealed class MainPageViewModel : ObservableObject
                         ? "Local file mode plays audio files from this Windows PC."
                     : $"Playback mode: {normalizedPlaybackMode}";
 
-                if (normalizedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture && !_isRestoringSessionState)
+                if (normalizedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture
+                    && !_isRestoringSessionState
+                    && !_suppressLocalMusicAutoLoad)
                 {
                     _ = LoadLocalMusicAsync();
                 }
@@ -3610,11 +3613,95 @@ public sealed class MainPageViewModel : ObservableObject
         RefreshDeckDisplayProperties();
     }
 
+    private void SetPlaybackModeForDeckPlayback(string playbackMode)
+    {
+        var wasSuppressed = _suppressLocalMusicAutoLoad;
+        _suppressLocalMusicAutoLoad = true;
+        try
+        {
+            SelectedPlaybackMode = playbackMode;
+        }
+        finally
+        {
+            _suppressLocalMusicAutoLoad = wasSuppressed;
+        }
+    }
+
+    private async Task PauseSpotifyForLocalPlaybackAsync()
+    {
+        try
+        {
+            if (!await _spotifyService.IsConnectedAsync())
+            {
+                return;
+            }
+
+            var missingModifyScopes = await _spotifyService.GetMissingScopesAsync([SpotifyScopes.UserModifyPlaybackState]);
+            if (missingModifyScopes.Count > 0)
+            {
+                StartupLog.Write("Spotify pause before local playback skipped; missing scope(s): " + string.Join(", ", missingModifyScopes));
+                return;
+            }
+
+            var deviceId = SelectedSpotifyDevice?.Id ?? _selectedOutputDeviceId;
+            var missingReadScopes = await _spotifyService.GetMissingScopesAsync([SpotifyScopes.UserReadPlaybackState]);
+            if (missingReadScopes.Count == 0)
+            {
+                var state = await _spotifyPlayerService.GetPlaybackStateAsync(CurrentSpotifySettings);
+                if (state?.IsPlaying != true)
+                {
+                    return;
+                }
+
+                deviceId = state.Device?.Id ?? deviceId;
+            }
+
+            await _spotifyPlayerService.PauseAsync(CurrentSpotifySettings, deviceId ?? string.Empty);
+            StartupLog.Write("Spotify paused before local deck playback.");
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write($"Spotify pause before local playback skipped: {ex.Message}");
+        }
+    }
+
+    private void PauseLocalForSpotifyPlayback()
+    {
+        try
+        {
+            _localMediaPlayer.Pause();
+            if (ResolvePlayingDeckItem(_playingDeckName)?.Source == SongSources.Local)
+            {
+                IsPlaybackPlaying = false;
+                SpotifyPlaybackStatus = "Local paused";
+            }
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write($"Local pause before Spotify playback skipped: {ex.Message}");
+        }
+    }
+
+    private async Task PrepareOutputForDeckPlaybackAsync(DancePilotQueueItem queueItem)
+    {
+        if (queueItem.Source == SongSources.Local)
+        {
+            await PauseSpotifyForLocalPlaybackAsync();
+            return;
+        }
+
+        if (queueItem.Source == SongSources.Spotify)
+        {
+            PauseLocalForSpotifyPlayback();
+        }
+    }
+
     private async Task TogglePlaybackAsync()
     {
         if (IsPlaybackPlaying)
         {
-            if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
+            if (ResolvePlayingDeckItem(_playingDeckName)?.Source == SongSources.Local
+                || SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
             {
                 PauseLocalMusic();
             }
@@ -3628,7 +3715,18 @@ public sealed class MainPageViewModel : ObservableObject
 
         if (_playingDeckQueueItemId is not null)
         {
-            if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
+            var loadedItem = ResolvePlayingDeckItem(_playingDeckName);
+            if (loadedItem?.Source == SongSources.Local)
+            {
+                SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.LocalFilesFuture);
+                ResumeLocalMusic();
+            }
+            else if (loadedItem?.Source == SongSources.Spotify)
+            {
+                SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.SpotifyConnect);
+                await ResumeSpotifyAsync();
+            }
+            else if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
             {
                 ResumeLocalMusic();
             }
@@ -3648,6 +3746,12 @@ public sealed class MainPageViewModel : ObservableObject
             return;
         }
 
+        if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture || ActiveSource == SourceLocal)
+        {
+            SpotifyOperationMessage = $"No local song is loaded on {ActiveDeckName}. Select or queue a local file first.";
+            return;
+        }
+
         await ResumeSpotifyAsync();
     }
 
@@ -3656,7 +3760,8 @@ public sealed class MainPageViewModel : ObservableObject
         var normalizedDeckName = NormalizeDeckName(deckName);
         if (IsDeckPlaying(normalizedDeckName))
         {
-            if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
+            if (ResolvePlayingDeckItem(normalizedDeckName)?.Source == SongSources.Local
+                || SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
             {
                 PauseLocalMusic();
             }
@@ -3672,7 +3777,18 @@ public sealed class MainPageViewModel : ObservableObject
             && _playingDeckQueueItemId is not null
             && string.Equals(_playingDeckName, normalizedDeckName, StringComparison.Ordinal))
         {
-            if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
+            var loadedItem = ResolvePlayingDeckItem(normalizedDeckName);
+            if (loadedItem?.Source == SongSources.Local)
+            {
+                SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.LocalFilesFuture);
+                ResumeLocalMusic();
+            }
+            else if (loadedItem?.Source == SongSources.Spotify)
+            {
+                SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.SpotifyConnect);
+                await ResumeSpotifyAsync();
+            }
+            else if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
             {
                 ResumeLocalMusic();
             }
@@ -3751,6 +3867,35 @@ public sealed class MainPageViewModel : ObservableObject
         return localTrack;
     }
 
+    private LocalMusicTrack ApplyQueueAlbumArtToLocalTrack(DancePilotQueueItem queueItem, LocalMusicTrack track)
+    {
+        if (!HasUsableAlbumArtSource(queueItem.AlbumArtUrl)
+            || string.Equals(track.AlbumArtUrl, queueItem.AlbumArtUrl, StringComparison.OrdinalIgnoreCase))
+        {
+            return track;
+        }
+
+        var updatedTrack = track with { AlbumArtUrl = queueItem.AlbumArtUrl };
+        var libraryIndex = _allLocalMusicTracks.FindIndex(existing =>
+            string.Equals(existing.FilePath, updatedTrack.FilePath, StringComparison.OrdinalIgnoreCase));
+        if (libraryIndex >= 0)
+        {
+            _allLocalMusicTracks[libraryIndex] = updatedTrack;
+        }
+
+        var visibleIndex = LocalMusicTracks
+            .Select((existing, index) => new { Track = existing, Index = index })
+            .FirstOrDefault(existing =>
+                string.Equals(existing.Track.FilePath, updatedTrack.FilePath, StringComparison.OrdinalIgnoreCase))
+            ?.Index;
+        if (visibleIndex is int index)
+        {
+            LocalMusicTracks[index] = updatedTrack;
+        }
+
+        return updatedTrack;
+    }
+
     private async Task<bool> PlayDeckQueueItemAsync(DancePilotQueueItem queueItem, string? deckName = null, bool isTransition = false)
     {
         var targetDeckName = NormalizeDeckName(deckName ?? ActiveDeckName);
@@ -3761,14 +3906,15 @@ public sealed class MainPageViewModel : ObservableObject
         }
 
         queueItem = await PrepareQueueItemAlbumArtForPlaybackAsync(targetDeckName, queueItem);
+        await PrepareOutputForDeckPlaybackAsync(queueItem);
 
         if (queueItem.Source == SongSources.Local)
         {
             var localTrack = await ResolveLocalQueueTrackAsync(queueItem);
             if (localTrack is not null)
             {
-                SelectedLocalMusicTrack = localTrack;
-                SelectedPlaybackMode = SpotifyPlaybackModes.LocalFilesFuture;
+                SelectedLocalMusicTrack = ApplyQueueAlbumArtToLocalTrack(queueItem, localTrack);
+                SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.LocalFilesFuture);
                 var started = await StartSelectedLocalMusicAsync(targetDeckName);
                 if (!started)
                 {
@@ -3789,7 +3935,7 @@ public sealed class MainPageViewModel : ObservableObject
         {
             if (SelectedPlaybackMode != SpotifyPlaybackModes.SpotifyConnect)
             {
-                SelectedPlaybackMode = SpotifyPlaybackModes.SpotifyConnect;
+                SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.SpotifyConnect);
             }
 
             var track = FindSpotifyTrackByUri(queueItem.ExternalUri) ?? new SpotifyTrackMetadata
@@ -4760,7 +4906,7 @@ public sealed class MainPageViewModel : ObservableObject
         return added;
     }
 
-    private Task QueueLocalTrackToDeckAsync(
+    private async Task QueueLocalTrackToDeckAsync(
         LocalMusicTrack track,
         string deckName,
         bool announce = true,
@@ -4782,8 +4928,8 @@ public sealed class MainPageViewModel : ObservableObject
             Status = "pending"
         };
 
+        queueItem = await ResolveDisplayQueueItemAlbumArtAsync(queueItem);
         QueueToDeck(queueItem, normalizedDeckName, announce, selectQueuedItem, beforeItemId);
-        return Task.CompletedTask;
     }
 
     private static string ResolveLocalTrackAlbumArt(LocalMusicTrack track) =>
