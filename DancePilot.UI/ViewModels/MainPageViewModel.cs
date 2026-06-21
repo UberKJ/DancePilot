@@ -2643,8 +2643,16 @@ public sealed class MainPageViewModel : ObservableObject
     private IEnumerable<DancePilotQueueItem> NormalizeQueueItems(IEnumerable<DancePilotQueueItem> items, string deckName)
     {
         var position = 1;
+        var seenSourceKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in items.Where(item => !string.IsNullOrWhiteSpace(item.Title)))
         {
+            var sourceKey = CreateExactQueueSourceKey(item);
+            if (sourceKey is not null && !seenSourceKeys.Add(sourceKey))
+            {
+                StartupLog.Write($"Removed duplicate restored queue source from {deckName}: {item.Title}");
+                continue;
+            }
+
             yield return item with
             {
                 DeckName = NormalizeDeckName(deckName),
@@ -3618,6 +3626,10 @@ public sealed class MainPageViewModel : ObservableObject
         RefreshDeckDisplayProperties();
     }
 
+    private bool IsLocalPlaybackLoadedForQueueItem(string deckName, DancePilotQueueItem item) =>
+        string.Equals(_localPlaybackDeckName, NormalizeDeckName(deckName), StringComparison.Ordinal)
+        && _localPlaybackQueueItemId == item.Id;
+
     private void SetPlaybackModeForDeckPlayback(string playbackMode)
     {
         var wasSuppressed = _suppressLocalMusicAutoLoad;
@@ -3725,8 +3737,15 @@ public sealed class MainPageViewModel : ObservableObject
             var loadedItem = ResolvePlayingDeckItem(_playingDeckName);
             if (loadedItem?.Source == SongSources.Local)
             {
-                SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.LocalFilesFuture);
-                ResumeLocalMusic();
+                if (IsLocalPlaybackLoadedForQueueItem(_playingDeckName, loadedItem))
+                {
+                    SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.LocalFilesFuture);
+                    ResumeLocalMusic();
+                }
+                else
+                {
+                    await PlayDeckQueueItemAsync(loadedItem, _playingDeckName);
+                }
             }
             else if (loadedItem?.Source == SongSources.Spotify)
             {
@@ -3787,8 +3806,15 @@ public sealed class MainPageViewModel : ObservableObject
             var loadedItem = ResolvePlayingDeckItem(normalizedDeckName);
             if (loadedItem?.Source == SongSources.Local)
             {
-                SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.LocalFilesFuture);
-                ResumeLocalMusic();
+                if (IsLocalPlaybackLoadedForQueueItem(normalizedDeckName, loadedItem))
+                {
+                    SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.LocalFilesFuture);
+                    ResumeLocalMusic();
+                }
+                else
+                {
+                    await PlayDeckQueueItemAsync(loadedItem, normalizedDeckName);
+                }
             }
             else if (loadedItem?.Source == SongSources.Spotify)
             {
@@ -4964,8 +4990,7 @@ public sealed class MainPageViewModel : ObservableObject
             Status = "pending"
         };
 
-        QueueToDeck(queueItem, normalizedDeckName, announce, selectQueuedItem, beforeItemId);
-        return Task.FromResult(true);
+        return Task.FromResult(QueueToDeck(queueItem, normalizedDeckName, announce, selectQueuedItem, beforeItemId));
     }
 
     public void QueueLocalTrackToActiveDeck(LocalMusicTrack track)
@@ -4984,8 +5009,10 @@ public sealed class MainPageViewModel : ObservableObject
         var normalizedDeckName = NormalizeDeckName(deckName);
         foreach (var track in tracks)
         {
-            await QueueLocalTrackToDeckAsync(track, normalizedDeckName, announce: false, selectQueuedItem: added == 0, beforeItemId: beforeItemId);
-            added++;
+            if (await QueueLocalTrackToDeckAsync(track, normalizedDeckName, announce: false, selectQueuedItem: added == 0, beforeItemId: beforeItemId))
+            {
+                added++;
+            }
         }
 
         if (added > 0)
@@ -4997,7 +5024,7 @@ public sealed class MainPageViewModel : ObservableObject
         return added;
     }
 
-    private async Task QueueLocalTrackToDeckAsync(
+    private async Task<bool> QueueLocalTrackToDeckAsync(
         LocalMusicTrack track,
         string deckName,
         bool announce = true,
@@ -5020,7 +5047,7 @@ public sealed class MainPageViewModel : ObservableObject
         };
 
         queueItem = await ResolveDisplayQueueItemAlbumArtAsync(queueItem);
-        QueueToDeck(queueItem, normalizedDeckName, announce, selectQueuedItem, beforeItemId);
+        return QueueToDeck(queueItem, normalizedDeckName, announce, selectQueuedItem, beforeItemId);
     }
 
     private static string ResolveLocalTrackAlbumArt(LocalMusicTrack track) =>
@@ -5166,7 +5193,7 @@ public sealed class MainPageViewModel : ObservableObject
     }
 
     private static string NormalizeQueueRequestKey(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
+        string.IsNullOrWhiteSpace(value) ? string.Empty : NormalizeExactSourceValue(value);
 
     private async Task<int> QueueSpotifyPlaylistsToDeckAsync(IReadOnlyList<SpotifyPlaylistSummary> playlists, string deckName, int? beforeItemId = null)
     {
@@ -5470,7 +5497,7 @@ public sealed class MainPageViewModel : ObservableObject
         RefreshActiveDeckQueue();
     }
 
-    private void QueueToDeck(
+    private bool QueueToDeck(
         DancePilotQueueItem item,
         string deckName,
         bool announce = true,
@@ -5480,6 +5507,53 @@ public sealed class MainPageViewModel : ObservableObject
         var normalizedDeckName = NormalizeDeckName(deckName);
         var queue = QueueForDeck(normalizedDeckName);
         var queuedItem = item with { DeckName = normalizedDeckName };
+        var duplicateIndex = FindExactQueueSourceIndex(queue, queuedItem);
+        if (duplicateIndex >= 0)
+        {
+            var existingItem = queue[duplicateIndex];
+            if (beforeItemId is int duplicateInsertBeforeId && existingItem.Id != duplicateInsertBeforeId)
+            {
+                queue.RemoveAt(duplicateIndex);
+                var insertIndex = queue.FindIndex(existing => existing.Id == duplicateInsertBeforeId);
+                if (insertIndex < 0)
+                {
+                    queue.Add(existingItem);
+                }
+                else
+                {
+                    queue.Insert(insertIndex, existingItem);
+                }
+            }
+
+            RenumberQueue(queue, normalizedDeckName);
+            ActiveDeckName = normalizedDeckName;
+            if (selectQueuedItem)
+            {
+                _selectedDeckQueueItemIds[normalizedDeckName] = existingItem.Id;
+            }
+
+            RefreshActiveDeckQueue();
+            if (selectQueuedItem)
+            {
+                SelectedActiveDeckQueueItem = ActiveDeckQueue.FirstOrDefault(queueItem => queueItem.Id == existingItem.Id)
+                    ?? existingItem;
+            }
+
+            UpdateNextUpFromDecks();
+            if (announce)
+            {
+                SpotifyOperationMessage = $"{existingItem.Title} is already queued on {normalizedDeckName}.";
+            }
+
+            if (IsDeckDisplayItem(normalizedDeckName, existingItem.Id)
+                || IsDeckNextPlayableItem(normalizedDeckName, existingItem.Id))
+            {
+                DispatchAsync(() => CacheQueuedAlbumArtAsync(normalizedDeckName, existingItem.Id));
+            }
+
+            QueueSessionStateSave();
+            return false;
+        }
 
         if (beforeItemId is int insertBeforeId)
         {
@@ -5530,6 +5604,63 @@ public sealed class MainPageViewModel : ObservableObject
         }
 
         QueueSessionStateSave();
+        return true;
+    }
+
+    private static int FindExactQueueSourceIndex(IReadOnlyList<DancePilotQueueItem> queue, DancePilotQueueItem item)
+    {
+        var sourceKey = CreateExactQueueSourceKey(item);
+        if (sourceKey is null)
+        {
+            return -1;
+        }
+
+        for (var index = 0; index < queue.Count; index++)
+        {
+            if (string.Equals(CreateExactQueueSourceKey(queue[index]), sourceKey, StringComparison.OrdinalIgnoreCase))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static string? CreateExactQueueSourceKey(DancePilotQueueItem item)
+    {
+        var source = string.IsNullOrWhiteSpace(item.Source)
+            ? "unknown"
+            : item.Source.Trim();
+        if (!string.IsNullOrWhiteSpace(item.ExternalUri))
+        {
+            return $"{source}:{NormalizeExactSourceValue(item.ExternalUri)}";
+        }
+
+        return item.SongId is int songId
+            ? $"{source}:song:{songId}"
+            : null;
+    }
+
+    private static string NormalizeExactSourceValue(string value)
+    {
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            if (!trimmed.Contains(':') && (trimmed.Contains('\\') || trimmed.Contains('/')))
+            {
+                return Path.GetFullPath(trimmed);
+            }
+        }
+        catch
+        {
+        }
+
+        return trimmed;
     }
 
     private async Task CacheQueuedAlbumArtAsync(string deckName, int itemId)
