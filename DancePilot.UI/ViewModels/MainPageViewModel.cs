@@ -93,6 +93,7 @@ public sealed class MainPageViewModel : ObservableObject
     private readonly Dictionary<string, IReadOnlyList<TrackWaveformSlice>> _trackWaveformCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _realTrackWaveformKeys = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _trackWaveformAnalysisInFlight = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _activeQueueSelectionRequestKeys = new(StringComparer.Ordinal);
     private int _nextDeckQueueItemId = 1;
     private bool _suppressSpotifyPlaylistAutoLoad;
     private string _spotifyClientId = string.Empty;
@@ -5080,42 +5081,92 @@ public sealed class MainPageViewModel : ObservableObject
             || selectedPlaylists.Count > 0
             || selectedLocalPlaylists.Count > 0;
 
-        var queuedCount = 0;
-        if (selectedLocalTracks.Count > 0)
+        var requestKey = hasExplicitSelection
+            ? CreateQueueSelectionRequestKey(
+                normalizedDeckName,
+                beforeItemId,
+                selectedSpotifyTracks,
+                selectedLocalTracks,
+                selectedPlaylists,
+                selectedLocalPlaylists)
+            : null;
+        if (requestKey is not null && !_activeQueueSelectionRequestKeys.Add(requestKey))
         {
-            queuedCount += await QueueLocalTracksToDeckAsync(selectedLocalTracks, normalizedDeckName, beforeItemId);
-        }
-
-        if (selectedSpotifyTracks.Count > 0)
-        {
-            queuedCount += await QueueSpotifyTracksToDeckAsync(selectedSpotifyTracks, normalizedDeckName, beforeItemId);
-        }
-
-        if (selectedPlaylists.Count > 0)
-        {
-            queuedCount += await QueueSpotifyPlaylistsToDeckAsync(selectedPlaylists, normalizedDeckName, beforeItemId);
-        }
-
-        if (selectedLocalPlaylists.Count > 0)
-        {
-            queuedCount += await QueueLocalPlaylistsToDeckAsync(selectedLocalPlaylists, normalizedDeckName, beforeItemId);
-        }
-
-        if (queuedCount == 0 && !hasExplicitSelection)
-        {
-            await QueueSelectedSourceToDeckAsync(normalizedDeckName, beforeItemId);
+            StartupLog.Write($"Ignored duplicate active queue request for {normalizedDeckName}.");
             return;
         }
 
-        if (queuedCount == 0)
+        try
         {
-            SpotifyOperationMessage = "No playable songs were found in that drop selection.";
-            return;
-        }
+            var queuedCount = 0;
+            if (selectedLocalTracks.Count > 0)
+            {
+                queuedCount += await QueueLocalTracksToDeckAsync(selectedLocalTracks, normalizedDeckName, beforeItemId);
+            }
 
-        SpotifyOperationMessage = $"Queued {queuedCount} item(s) on {normalizedDeckName}.";
-        QueueSessionStateSave();
+            if (selectedSpotifyTracks.Count > 0)
+            {
+                queuedCount += await QueueSpotifyTracksToDeckAsync(selectedSpotifyTracks, normalizedDeckName, beforeItemId);
+            }
+
+            if (selectedPlaylists.Count > 0)
+            {
+                queuedCount += await QueueSpotifyPlaylistsToDeckAsync(selectedPlaylists, normalizedDeckName, beforeItemId);
+            }
+
+            if (selectedLocalPlaylists.Count > 0)
+            {
+                queuedCount += await QueueLocalPlaylistsToDeckAsync(selectedLocalPlaylists, normalizedDeckName, beforeItemId);
+            }
+
+            if (queuedCount == 0 && !hasExplicitSelection)
+            {
+                await QueueSelectedSourceToDeckAsync(normalizedDeckName, beforeItemId);
+                return;
+            }
+
+            if (queuedCount == 0)
+            {
+                SpotifyOperationMessage = "No playable songs were found in that drop selection.";
+                return;
+            }
+
+            SpotifyOperationMessage = $"Queued {queuedCount} item(s) on {normalizedDeckName}.";
+            QueueSessionStateSave();
+        }
+        finally
+        {
+            if (requestKey is not null)
+            {
+                _activeQueueSelectionRequestKeys.Remove(requestKey);
+            }
+        }
     }
+
+    private static string CreateQueueSelectionRequestKey(
+        string deckName,
+        int? beforeItemId,
+        IEnumerable<SpotifyTrackMetadata> spotifyTracks,
+        IEnumerable<LocalMusicTrack> localTracks,
+        IEnumerable<SpotifyPlaylistSummary> spotifyPlaylists,
+        IEnumerable<LocalMusicPlaylist> localPlaylists)
+    {
+        var parts = new List<string>
+        {
+            $"deck:{deckName}",
+            $"before:{beforeItemId?.ToString() ?? "end"}"
+        };
+
+        parts.AddRange(spotifyTracks.Select(track => $"spotify-track:{NormalizeQueueRequestKey(track.SpotifyUri ?? track.SpotifyTrackId)}"));
+        parts.AddRange(localTracks.Select(track => $"local-track:{NormalizeQueueRequestKey(track.FilePath)}"));
+        parts.AddRange(spotifyPlaylists.Select(playlist => $"spotify-playlist:{NormalizeQueueRequestKey(playlist.SpotifyPlaylistId)}"));
+        parts.AddRange(localPlaylists.Select(playlist => $"local-playlist:{playlist.Id}"));
+
+        return string.Join("|", parts.Order(StringComparer.Ordinal));
+    }
+
+    private static string NormalizeQueueRequestKey(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
 
     private async Task<int> QueueSpotifyPlaylistsToDeckAsync(IReadOnlyList<SpotifyPlaylistSummary> playlists, string deckName, int? beforeItemId = null)
     {

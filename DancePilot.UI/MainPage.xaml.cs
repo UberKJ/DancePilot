@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage.Pickers;
 using Windows.System;
+using System.Runtime.CompilerServices;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info.
@@ -27,6 +28,9 @@ public sealed partial class MainPage : Page
     private int _nextDragOperationId;
     private int? _activeDragOperationId;
     private int? _consumedDragOperationId;
+    private bool _dragInProgress;
+    private string? _activeDragPayloadSignature;
+    private string? _consumedDragPayloadSignature;
 
     public MainPage()
     {
@@ -186,20 +190,39 @@ public sealed partial class MainPage : Page
 
     private void BeginDragOperation(object sender, DragItemsStartingEventArgs e)
     {
-        _activeDragOperationId = ++_nextDragOperationId;
+        var dragSourceList = sender as ListView;
+        var draggedItems = ResolveDraggedItems(sender, e);
+        var payloadSignature = CreateDragPayloadSignature(dragSourceList, draggedItems);
+        if (!_dragInProgress || !string.Equals(_activeDragPayloadSignature, payloadSignature, StringComparison.Ordinal))
+        {
+            _activeDragOperationId = ++_nextDragOperationId;
+            _consumedDragOperationId = null;
+            _consumedDragPayloadSignature = null;
+        }
+
+        _dragInProgress = true;
+        _lastDragSourceList = dragSourceList;
+        _draggedItems = draggedItems;
+        _activeDragPayloadSignature = payloadSignature;
+    }
+
+    private void List_DragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
+    {
+        _dragInProgress = false;
+        _activeDragOperationId = null;
         _consumedDragOperationId = null;
-        _lastDragSourceList = sender as ListView;
-        _draggedItems = ResolveDraggedItems(sender, e);
+        _activeDragPayloadSignature = null;
+        _consumedDragPayloadSignature = null;
+        _draggedItems = [];
+        _lastDragSourceList = null;
     }
 
     private static IReadOnlyList<object> ResolveDraggedItems(object sender, DragItemsStartingEventArgs e)
     {
-        if (sender is ListView list && list.SelectedItems.Count > e.Items.Count)
-        {
-            return list.SelectedItems.Cast<object>().ToList();
-        }
-
-        return e.Items.Cast<object>().ToList();
+        return e.Items
+            .Cast<object>()
+            .DistinctBy(CreateDragItemSignature)
+            .ToList();
     }
 
     private void DeckDropTarget_DragOver(object sender, DragEventArgs e)
@@ -301,12 +324,15 @@ public sealed partial class MainPage : Page
     }
 
     private bool IsActiveDragConsumed() =>
-        _activeDragOperationId is not null
-        && _consumedDragOperationId == _activeDragOperationId;
+        (_activeDragOperationId is not null
+            && _consumedDragOperationId == _activeDragOperationId)
+        || (!string.IsNullOrWhiteSpace(_activeDragPayloadSignature)
+            && string.Equals(_consumedDragPayloadSignature, _activeDragPayloadSignature, StringComparison.Ordinal));
 
     private void ConsumeDropPayload(ListView? dragSourceList, int? dragOperationId)
     {
         _consumedDragOperationId = dragOperationId ?? _activeDragOperationId;
+        _consumedDragPayloadSignature = _activeDragPayloadSignature;
         _draggedItems = [];
         _lastDragSourceList = null;
         ClearListSelection(dragSourceList);
@@ -325,53 +351,23 @@ public sealed partial class MainPage : Page
 
     private IReadOnlyList<object> ResolveDropItems()
     {
-        if (IsActiveDragConsumed())
-        {
-            return [];
-        }
-
-        if (_draggedItems.Count > 0)
-        {
-            return _draggedItems;
-        }
-
-        return ResolveSelectedItemsFromList(_lastDragSourceList);
+        return IsActiveDragConsumed() ? [] : _draggedItems;
     }
 
-    private IReadOnlyList<object> ResolveSelectedItemsFromList(ListView? list)
-    {
-        if (list is null)
-        {
-            return [];
-        }
+    private static string CreateDragPayloadSignature(ListView? sourceList, IEnumerable<object> items) =>
+        $"{sourceList?.Name ?? "unknown"}|{string.Join("|", items.Select(CreateDragItemSignature).Order(StringComparer.Ordinal))}";
 
-        if (ReferenceEquals(list, SpotifyPreviewTracksList) || ReferenceEquals(list, SpotifySearchResultsList))
+    private static string CreateDragItemSignature(object item) =>
+        item switch
         {
-            return GetSelectedItems<SpotifyTrackMetadata>(list).Cast<object>().ToList();
-        }
-
-        if (ReferenceEquals(list, SpotifyPlaylistsList))
-        {
-            return GetSelectedItems<SpotifyPlaylistSummary>(list).Cast<object>().ToList();
-        }
-
-        if (ReferenceEquals(list, LocalMusicList))
-        {
-            return GetSelectedItems<LocalMusicTrack>(list).Cast<object>().ToList();
-        }
-
-        if (ReferenceEquals(list, LocalPlaylistsList))
-        {
-            return GetSelectedItems<LocalMusicPlaylist>(list).Cast<object>().ToList();
-        }
-
-        if (ReferenceEquals(list, DeckAQueueList) || ReferenceEquals(list, DeckBQueueList) || ReferenceEquals(list, SongQueueList))
-        {
-            return GetSelectedItems<DancePilotQueueItem>(list).Cast<object>().ToList();
-        }
-
-        return [];
-    }
+            DancePilotQueueItem queueItem => $"queue:{queueItem.Id}:{queueItem.DeckName}",
+            SpotifyTrackMetadata track when !string.IsNullOrWhiteSpace(track.SpotifyUri) => $"spotify-track:{track.SpotifyUri}",
+            SpotifyTrackMetadata track when !string.IsNullOrWhiteSpace(track.SpotifyTrackId) => $"spotify-track-id:{track.SpotifyTrackId}",
+            SpotifyPlaylistSummary playlist when !string.IsNullOrWhiteSpace(playlist.SpotifyPlaylistId) => $"spotify-playlist:{playlist.SpotifyPlaylistId}",
+            LocalMusicTrack track => $"local-track:{track.FilePath}",
+            LocalMusicPlaylist playlist => $"local-playlist:{playlist.Id}",
+            _ => $"object:{RuntimeHelpers.GetHashCode(item)}"
+        };
 
     private static string DescribeList(ListView? list) =>
         list?.Name ?? "unknown list";
