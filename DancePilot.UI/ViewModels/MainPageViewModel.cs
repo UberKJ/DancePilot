@@ -122,6 +122,8 @@ public sealed class MainPageViewModel : ObservableObject
     private string _queueViewDeckName = "Deck A";
     private string _playingDeckName = "Deck A";
     private int? _playingDeckQueueItemId;
+    private string? _localPlaybackDeckName;
+    private int? _localPlaybackQueueItemId;
     private int? _lastTransitionSourceItemId;
     private int? _lastTransitionTargetItemId;
     private bool _isPlaybackPlaying;
@@ -3528,7 +3530,7 @@ public sealed class MainPageViewModel : ObservableObject
         await QueueLocalTrackToDeckAsync(SelectedLocalMusicTrack, ActiveDeckName);
     }
 
-    private Task<bool> StartSelectedLocalMusicAsync(string? deckName = null)
+    private Task<bool> StartSelectedLocalMusicAsync(string? deckName = null, int? queueItemId = null)
     {
         if (SelectedLocalMusicTrack is null)
         {
@@ -3544,6 +3546,8 @@ public sealed class MainPageViewModel : ObservableObject
 
         var fileUri = new Uri(SelectedLocalMusicTrack.FilePath);
         var playbackDeckName = NormalizeDeckName(deckName ?? ActiveDeckName);
+        _localPlaybackDeckName = playbackDeckName;
+        _localPlaybackQueueItemId = queueItemId;
         _localMediaPlayer.Source = MediaSource.CreateFromUri(fileUri);
         _localMediaPlayer.Volume = AlwaysFadeSongs
             ? 0
@@ -3670,6 +3674,8 @@ public sealed class MainPageViewModel : ObservableObject
         try
         {
             _localMediaPlayer.Pause();
+            _localPlaybackDeckName = null;
+            _localPlaybackQueueItemId = null;
             if (ResolvePlayingDeckItem(_playingDeckName)?.Source == SongSources.Local)
             {
                 IsPlaybackPlaying = false;
@@ -3915,7 +3921,7 @@ public sealed class MainPageViewModel : ObservableObject
             {
                 SelectedLocalMusicTrack = ApplyQueueAlbumArtToLocalTrack(queueItem, localTrack);
                 SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.LocalFilesFuture);
-                var started = await StartSelectedLocalMusicAsync(targetDeckName);
+                var started = await StartSelectedLocalMusicAsync(targetDeckName, queueItem.Id);
                 if (!started)
                 {
                     return false;
@@ -4059,7 +4065,10 @@ public sealed class MainPageViewModel : ObservableObject
     {
         var normalizedDeckName = NormalizeDeckName(deckName);
         _lastPlayedDeckQueueItemIds[normalizedDeckName] = itemId;
-        _selectedDeckQueueItemIds[normalizedDeckName] = GetQueueItemAfter(normalizedDeckName, itemId)?.Id;
+        _selectedDeckQueueItemIds[normalizedDeckName] = GetQueueItemAfter(
+            normalizedDeckName,
+            itemId,
+            skipSamePlaybackSource: true)?.Id;
 
         if (string.Equals(ActiveDeckName, normalizedDeckName, StringComparison.Ordinal))
         {
@@ -4082,6 +4091,13 @@ public sealed class MainPageViewModel : ObservableObject
         }
 
         _playingDeckQueueItemId = null;
+        if (string.Equals(_localPlaybackDeckName, NormalizeDeckName(deckName), StringComparison.Ordinal)
+            && _localPlaybackQueueItemId == itemId)
+        {
+            _localPlaybackDeckName = null;
+            _localPlaybackQueueItemId = null;
+        }
+
         _currentPlaybackAlbumArtUrl = null;
         OnPropertyChanged(nameof(DeckAPlayPauseLabel));
         OnPropertyChanged(nameof(DeckBPlayPauseLabel));
@@ -4483,11 +4499,17 @@ public sealed class MainPageViewModel : ObservableObject
     private DancePilotQueueItem? FindTransitionTarget(string? deckName = null)
     {
         var resolvedDeckName = NormalizeDeckName(deckName ?? ResolveTransitionDeckName());
-        return FindSelectedDeckQueueItem(resolvedDeckName)
-            ?? GetNextDeckQueueItem(resolvedDeckName, includeFirstIfNoLastPlayed: true);
+        return FindSelectedPendingDeckQueueItem(resolvedDeckName)
+            ?? GetNextDeckQueueItem(
+                resolvedDeckName,
+                includeFirstIfNoLastPlayed: true,
+                skipSamePlaybackSource: true);
     }
 
-    private DancePilotQueueItem? GetNextDeckQueueItem(string deckName, bool includeFirstIfNoLastPlayed = false)
+    private DancePilotQueueItem? GetNextDeckQueueItem(
+        string deckName,
+        bool includeFirstIfNoLastPlayed = false,
+        bool skipSamePlaybackSource = false)
     {
         var normalizedDeckName = NormalizeDeckName(deckName);
         var queue = QueueForDeck(normalizedDeckName);
@@ -4520,16 +4542,42 @@ public sealed class MainPageViewModel : ObservableObject
             return null;
         }
 
-        return queue[currentIndex + 1];
+        var currentItem = queue[currentIndex];
+        for (var index = currentIndex + 1; index < queue.Count; index++)
+        {
+            var nextItem = queue[index];
+            if (!skipSamePlaybackSource || !IsSamePlaybackSource(currentItem, nextItem))
+            {
+                return nextItem;
+            }
+        }
+
+        return null;
     }
 
-    private DancePilotQueueItem? GetQueueItemAfter(string deckName, int itemId)
+    private DancePilotQueueItem? GetQueueItemAfter(
+        string deckName,
+        int itemId,
+        bool skipSamePlaybackSource = false)
     {
         var queue = QueueForDeck(NormalizeDeckName(deckName));
         var currentIndex = queue.FindIndex(item => item.Id == itemId);
-        return currentIndex >= 0 && currentIndex + 1 < queue.Count
-            ? queue[currentIndex + 1]
-            : null;
+        if (currentIndex < 0)
+        {
+            return null;
+        }
+
+        var currentItem = queue[currentIndex];
+        for (var index = currentIndex + 1; index < queue.Count; index++)
+        {
+            var nextItem = queue[index];
+            if (!skipSamePlaybackSource || !IsSamePlaybackSource(currentItem, nextItem))
+            {
+                return nextItem;
+            }
+        }
+
+        return null;
     }
 
     private string ResolveTransitionDeckName() =>
@@ -4546,6 +4594,42 @@ public sealed class MainPageViewModel : ObservableObject
         }
 
         return QueueForDeck(normalizedDeckName).FirstOrDefault(item => item.Id == selectedId.Value);
+    }
+
+    private DancePilotQueueItem? FindSelectedPendingDeckQueueItem(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        var selectedItem = FindSelectedDeckQueueItem(normalizedDeckName);
+        if (selectedItem is null)
+        {
+            return null;
+        }
+
+        if (string.Equals(_playingDeckName, normalizedDeckName, StringComparison.Ordinal)
+            && _playingDeckQueueItemId == selectedItem.Id)
+        {
+            return null;
+        }
+
+        var lastPlayedId = _lastPlayedDeckQueueItemIds.GetValueOrDefault(normalizedDeckName);
+        return lastPlayedId == selectedItem.Id ? null : selectedItem;
+    }
+
+    private static bool IsSamePlaybackSource(DancePilotQueueItem first, DancePilotQueueItem second)
+    {
+        if (!string.Equals(first.Source, second.Source, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(first.ExternalUri)
+            && !string.IsNullOrWhiteSpace(second.ExternalUri))
+        {
+            return string.Equals(first.ExternalUri, second.ExternalUri, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return string.Equals(first.Title, second.Title, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(first.Artist, second.Artist, StringComparison.OrdinalIgnoreCase);
     }
 
     private int? GetLastPlayedDeckQueueItemId(string deckName)
@@ -4579,8 +4663,11 @@ public sealed class MainPageViewModel : ObservableObject
             return null;
         }
 
-        var next = FindSelectedDeckQueueItem(normalizedDeckName)
-            ?? GetNextDeckQueueItem(normalizedDeckName, includeFirstIfNoLastPlayed: true);
+        var next = FindSelectedPendingDeckQueueItem(normalizedDeckName)
+            ?? GetNextDeckQueueItem(
+                normalizedDeckName,
+                includeFirstIfNoLastPlayed: true,
+                skipSamePlaybackSource: true);
         if (next is not null)
         {
             return next;
@@ -5920,8 +6007,19 @@ public sealed class MainPageViewModel : ObservableObject
 
     private async Task HandleLocalMediaEndedAsync()
     {
-        var completedDeckName = _playingDeckName;
-        var completedItemId = _playingDeckQueueItemId;
+        var completedDeckName = NormalizeDeckName(_localPlaybackDeckName ?? _playingDeckName);
+        var completedItemId = _localPlaybackQueueItemId;
+        if (completedItemId is null
+            || !string.Equals(_playingDeckName, completedDeckName, StringComparison.Ordinal)
+            || _playingDeckQueueItemId != completedItemId
+            || ResolvePlayingDeckItem(completedDeckName)?.Source != SongSources.Local)
+        {
+            StartupLog.Write("Ignored stale local media ended event.");
+            return;
+        }
+
+        _localPlaybackDeckName = null;
+        _localPlaybackQueueItemId = null;
         IsPlaybackPlaying = false;
         SpotifyPlaybackStatus = "Local ended";
         SpotifyProgressDisplay = SelectedLocalMusicTrack?.Duration is TimeSpan duration
