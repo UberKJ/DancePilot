@@ -24,8 +24,9 @@ public sealed partial class MainPage : Page
     public MainPageViewModel ViewModel { get; } = CreateViewModel();
     private IReadOnlyList<object> _draggedItems = [];
     private ListView? _lastDragSourceList;
-    private DateTimeOffset _lastHandledDropAt = DateTimeOffset.MinValue;
-    private string? _lastHandledDropSignature;
+    private int _nextDragOperationId;
+    private int? _activeDragOperationId;
+    private int? _consumedDragOperationId;
 
     public MainPage()
     {
@@ -169,8 +170,7 @@ public sealed partial class MainPage : Page
 
     private void SourceList_DragItemsStarting(object sender, DragItemsStartingEventArgs e)
     {
-        _lastDragSourceList = sender as ListView;
-        _draggedItems = ResolveDraggedItems(sender, e);
+        BeginDragOperation(sender, e);
         StartupLog.Write($"Source drag started from {DescribeList(_lastDragSourceList)} with {_draggedItems.Count} item(s): {DescribeItems(_draggedItems)}");
         e.Data.RequestedOperation = DataPackageOperation.Copy;
         e.Data.SetText("DancePilot source selection");
@@ -178,11 +178,18 @@ public sealed partial class MainPage : Page
 
     private void QueueList_DragItemsStarting(object sender, DragItemsStartingEventArgs e)
     {
-        _lastDragSourceList = sender as ListView;
-        _draggedItems = ResolveDraggedItems(sender, e);
+        BeginDragOperation(sender, e);
         StartupLog.Write($"Queue drag started from {DescribeList(_lastDragSourceList)} with {_draggedItems.Count} item(s): {DescribeItems(_draggedItems)}");
         e.Data.RequestedOperation = DataPackageOperation.Move;
         e.Data.SetText("DancePilot queue selection");
+    }
+
+    private void BeginDragOperation(object sender, DragItemsStartingEventArgs e)
+    {
+        _activeDragOperationId = ++_nextDragOperationId;
+        _consumedDragOperationId = null;
+        _lastDragSourceList = sender as ListView;
+        _draggedItems = ResolveDraggedItems(sender, e);
     }
 
     private static IReadOnlyList<object> ResolveDraggedItems(object sender, DragItemsStartingEventArgs e)
@@ -197,6 +204,13 @@ public sealed partial class MainPage : Page
 
     private void DeckDropTarget_DragOver(object sender, DragEventArgs e)
     {
+        if (IsActiveDragConsumed())
+        {
+            e.AcceptedOperation = DataPackageOperation.None;
+            e.Handled = true;
+            return;
+        }
+
         var dropItems = ResolveDropItems();
         e.AcceptedOperation = dropItems.OfType<DancePilotQueueItem>().Any()
             ? DataPackageOperation.Move
@@ -206,6 +220,13 @@ public sealed partial class MainPage : Page
 
     private void QueueList_DragOver(object sender, DragEventArgs e)
     {
+        if (IsActiveDragConsumed())
+        {
+            e.AcceptedOperation = DataPackageOperation.None;
+            e.Handled = true;
+            return;
+        }
+
         var dropItems = ResolveDropItems();
         e.AcceptedOperation = dropItems.OfType<DancePilotQueueItem>().Any()
             ? DataPackageOperation.Move
@@ -242,9 +263,15 @@ public sealed partial class MainPage : Page
     {
         e.Handled = true;
 
+        if (IsActiveDragConsumed())
+        {
+            StartupLog.Write($"Ignored already consumed drop to {deckName}.");
+            return;
+        }
+
+        var dragSourceList = _lastDragSourceList;
+        var dragOperationId = _activeDragOperationId;
         var draggedItems = ResolveDropItems().ToList();
-        _draggedItems = [];
-        _lastDragSourceList = null;
 
         StartupLog.Write($"Drop to {deckName}: {draggedItems.Count} item(s): {DescribeItems(draggedItems)}");
         if (draggedItems.Count == 0)
@@ -253,17 +280,7 @@ public sealed partial class MainPage : Page
         }
 
         var targetItem = FindQueueItemFromDropTarget(e.OriginalSource as DependencyObject);
-        var dropSignature = CreateDropSignature(deckName, targetItem?.Id, draggedItems);
-        var now = DateTimeOffset.UtcNow;
-        if (string.Equals(_lastHandledDropSignature, dropSignature, StringComparison.Ordinal)
-            && now - _lastHandledDropAt < TimeSpan.FromMilliseconds(750))
-        {
-            StartupLog.Write($"Ignored duplicate routed drop to {deckName}: {DescribeItems(draggedItems)}");
-            return;
-        }
-
-        _lastHandledDropSignature = dropSignature;
-        _lastHandledDropAt = now;
+        ConsumeDropPayload(dragSourceList, dragOperationId);
 
         var queueItems = draggedItems.OfType<DancePilotQueueItem>().ToList();
         if (queueItems.Count > 0)
@@ -283,60 +300,42 @@ public sealed partial class MainPage : Page
         }
     }
 
-    private static string CreateDropSignature(string deckName, int? targetItemId, IEnumerable<object> items) =>
-        $"{deckName}|{targetItemId?.ToString() ?? "end"}|{string.Join("|", items.Select(CreateDropItemSignature).Order(StringComparer.Ordinal))}";
+    private bool IsActiveDragConsumed() =>
+        _activeDragOperationId is not null
+        && _consumedDragOperationId == _activeDragOperationId;
 
-    private static string CreateDropItemSignature(object item) =>
-        item switch
+    private void ConsumeDropPayload(ListView? dragSourceList, int? dragOperationId)
+    {
+        _consumedDragOperationId = dragOperationId ?? _activeDragOperationId;
+        _draggedItems = [];
+        _lastDragSourceList = null;
+        ClearListSelection(dragSourceList);
+    }
+
+    private static void ClearListSelection(ListView? list)
+    {
+        if (list is null)
         {
-            DancePilotQueueItem queueItem => $"queue:{queueItem.Id}:{queueItem.DeckName}",
-            SpotifyTrackMetadata track => $"spotify-track:{track.SpotifyUri ?? track.SpotifyTrackId ?? track.Title}",
-            SpotifyPlaylistSummary playlist => $"spotify-playlist:{playlist.SpotifyPlaylistId ?? playlist.Name}",
-            LocalMusicTrack track => $"local-track:{track.FilePath}",
-            LocalMusicPlaylist playlist => $"local-playlist:{playlist.Id}",
-            _ => $"{item.GetType().FullName}:{item.GetHashCode()}"
-        };
+            return;
+        }
+
+        list.SelectedItems.Clear();
+        list.SelectedItem = null;
+    }
 
     private IReadOnlyList<object> ResolveDropItems()
     {
+        if (IsActiveDragConsumed())
+        {
+            return [];
+        }
+
         if (_draggedItems.Count > 0)
         {
             return _draggedItems;
         }
 
-        var sourceItems = ResolveSelectedItemsFromList(_lastDragSourceList);
-        if (sourceItems.Count > 0)
-        {
-            return sourceItems;
-        }
-
-        sourceItems = ResolveSelectedSourceItems();
-        if (sourceItems.Count > 0)
-        {
-            return sourceItems;
-        }
-
-        return ResolveSelectedQueueItems();
-    }
-
-    private IReadOnlyList<object> ResolveSelectedSourceItems()
-    {
-        var items = new List<object>();
-        items.AddRange(GetSelectedItems<SpotifyTrackMetadata>(SpotifyPreviewTracksList).Cast<object>());
-        items.AddRange(GetSelectedItems<SpotifyTrackMetadata>(SpotifySearchResultsList).Cast<object>());
-        items.AddRange(GetSelectedItems<SpotifyPlaylistSummary>(SpotifyPlaylistsList).Cast<object>());
-        items.AddRange(GetSelectedItems<LocalMusicTrack>(LocalMusicList).Cast<object>());
-        items.AddRange(GetSelectedItems<LocalMusicPlaylist>(LocalPlaylistsList).Cast<object>());
-        return items.Distinct().ToList();
-    }
-
-    private IReadOnlyList<object> ResolveSelectedQueueItems()
-    {
-        var items = new List<object>();
-        items.AddRange(GetSelectedItems<DancePilotQueueItem>(DeckAQueueList).Cast<object>());
-        items.AddRange(GetSelectedItems<DancePilotQueueItem>(DeckBQueueList).Cast<object>());
-        items.AddRange(GetSelectedItems<DancePilotQueueItem>(SongQueueList).Cast<object>());
-        return items.Distinct().ToList();
+        return ResolveSelectedItemsFromList(_lastDragSourceList);
     }
 
     private IReadOnlyList<object> ResolveSelectedItemsFromList(ListView? list)
