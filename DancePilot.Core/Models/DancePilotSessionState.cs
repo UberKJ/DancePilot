@@ -26,6 +26,14 @@ public sealed record DancePilotSessionState
 
     public int? LastPlayedDeckBQueueItemId { get; init; }
 
+    public int? DeckAAlbumArtQueueItemId { get; init; }
+
+    public string? DeckAAlbumArtSource { get; init; }
+
+    public int? DeckBAlbumArtQueueItemId { get; init; }
+
+    public string? DeckBAlbumArtSource { get; init; }
+
     public int NextDeckQueueItemId { get; init; } = 1;
 
     public List<DancePilotQueueItem> DeckAQueue { get; init; } = [];

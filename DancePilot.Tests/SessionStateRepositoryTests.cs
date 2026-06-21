@@ -29,6 +29,8 @@ public sealed class SessionStateRepositoryTests
                 ActiveSource = "Spotify",
                 ActiveDeckName = "Deck B",
                 SelectedDeckBQueueItemId = 7,
+                DeckBAlbumArtQueueItemId = 7,
+                DeckBAlbumArtSource = "file:///C:/Users/elkah/AppData/Local/DancePilot/AlbumArt/test-song.jpg",
                 NextDeckQueueItemId = 8,
                 DeckBQueue =
                 [
@@ -70,6 +72,8 @@ public sealed class SessionStateRepositoryTests
             Assert.Equal("Deck B", restored.ActiveDeckName);
             Assert.Equal(8, restored.NextDeckQueueItemId);
             Assert.Equal(7, restored.SelectedDeckBQueueItemId);
+            Assert.Equal(7, restored.DeckBAlbumArtQueueItemId);
+            Assert.Equal("file:///C:/Users/elkah/AppData/Local/DancePilot/AlbumArt/test-song.jpg", restored.DeckBAlbumArtSource);
             Assert.Equal("Test Song", Assert.Single(restored.DeckBQueue).Title);
             Assert.Equal("Dance Floor", restored.SelectedSpotifyPlaylist?.Name);
             Assert.Equal("spotify:track:abc", Assert.Single(restored.SpotifyPreviewTracks).SpotifyUri);

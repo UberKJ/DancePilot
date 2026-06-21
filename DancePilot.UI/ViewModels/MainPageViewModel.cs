@@ -80,6 +80,11 @@ public sealed class MainPageViewModel : ObservableObject
         ["Deck A"] = null,
         ["Deck B"] = null
     };
+    private readonly Dictionary<string, RestoredDeckAlbumArt> _restoredDeckAlbumArt = new(StringComparer.Ordinal)
+    {
+        ["Deck A"] = new(null, null),
+        ["Deck B"] = new(null, null)
+    };
     private readonly List<LocalMusicTrack> _allLocalMusicTracks = [];
     private readonly List<DancePilotQueueItem> _deckAQueue = [];
     private readonly List<DancePilotQueueItem> _deckBQueue = [];
@@ -2312,6 +2317,8 @@ public sealed class MainPageViewModel : ObservableObject
             _selectedDeckQueueItemIds["Deck B"] = FindQueueItemId("Deck B", state.SelectedDeckBQueueItemId);
             _lastPlayedDeckQueueItemIds["Deck A"] = FindQueueItemId("Deck A", state.LastPlayedDeckAQueueItemId);
             _lastPlayedDeckQueueItemIds["Deck B"] = FindQueueItemId("Deck B", state.LastPlayedDeckBQueueItemId);
+            _restoredDeckAlbumArt["Deck A"] = CreateRestoredDeckAlbumArt("Deck A", state.DeckAAlbumArtQueueItemId, state.DeckAAlbumArtSource);
+            _restoredDeckAlbumArt["Deck B"] = CreateRestoredDeckAlbumArt("Deck B", state.DeckBAlbumArtQueueItemId, state.DeckBAlbumArtSource);
             _playingDeckName = NormalizeDeckName(state.PlayingDeckName);
             _playingDeckQueueItemId = FindQueueItemId(_playingDeckName, state.PlayingDeckQueueItemId);
 
@@ -2529,35 +2536,87 @@ public sealed class MainPageViewModel : ObservableObject
         }
     }
 
-    private DancePilotSessionState CreateSessionState() => new()
+    private DancePilotSessionState CreateSessionState()
     {
-        SavedAt = DateTimeOffset.UtcNow,
-        ActiveSource = ActiveSource,
-        ActiveDeckName = ActiveDeckName,
-        SelectedPlaybackMode = SelectedPlaybackMode,
-        PlayingDeckName = _playingDeckName,
-        PlayingDeckQueueItemId = _playingDeckQueueItemId,
-        SelectedDeckAQueueItemId = _selectedDeckQueueItemIds.GetValueOrDefault("Deck A"),
-        SelectedDeckBQueueItemId = _selectedDeckQueueItemIds.GetValueOrDefault("Deck B"),
-        LastPlayedDeckAQueueItemId = _lastPlayedDeckQueueItemIds.GetValueOrDefault("Deck A"),
-        LastPlayedDeckBQueueItemId = _lastPlayedDeckQueueItemIds.GetValueOrDefault("Deck B"),
-        NextDeckQueueItemId = _nextDeckQueueItemId,
-        DeckAQueue = _deckAQueue.ToList(),
-        DeckBQueue = _deckBQueue.ToList(),
-        SelectedSpotifyPlaylist = SelectedSpotifyPlaylist,
-        SelectedSpotifyTrackKey = TrackKey(SelectedSpotifyTrack),
-        SpotifySearchQuery = SpotifySearchQuery,
-        SelectedSpotifySearchTrackKey = TrackKey(SelectedSpotifySearchTrack),
-        SpotifyPreviewTracks = SpotifyPreviewTracks.ToList(),
-        SpotifySearchResults = SpotifySearchResults.ToList(),
-        SelectedImportedSpotifyPlaylistId = SelectedImportedSpotifyPlaylist?.SpotifyPlaylistId,
-        SelectedImportedSpotifyTrackKey = TrackKey(SelectedImportedSpotifyTrack),
-        LocalMusicSearchQuery = LocalMusicSearchQuery,
-        LocalMusicFolderPath = LocalMusicFolderPath,
-        LocalMusicSortOption = SelectedLocalMusicSortOption,
-        SelectedLocalPlaylistId = SelectedLocalMusicPlaylist?.Id,
-        SelectedLocalFilePath = SelectedLocalMusicTrack?.FilePath
-    };
+        var deckAAlbumArt = CreateDeckAlbumArtSnapshot("Deck A");
+        var deckBAlbumArt = CreateDeckAlbumArtSnapshot("Deck B");
+
+        return new DancePilotSessionState
+        {
+            SavedAt = DateTimeOffset.UtcNow,
+            ActiveSource = ActiveSource,
+            ActiveDeckName = ActiveDeckName,
+            SelectedPlaybackMode = SelectedPlaybackMode,
+            PlayingDeckName = _playingDeckName,
+            PlayingDeckQueueItemId = _playingDeckQueueItemId,
+            SelectedDeckAQueueItemId = _selectedDeckQueueItemIds.GetValueOrDefault("Deck A"),
+            SelectedDeckBQueueItemId = _selectedDeckQueueItemIds.GetValueOrDefault("Deck B"),
+            LastPlayedDeckAQueueItemId = _lastPlayedDeckQueueItemIds.GetValueOrDefault("Deck A"),
+            LastPlayedDeckBQueueItemId = _lastPlayedDeckQueueItemIds.GetValueOrDefault("Deck B"),
+            DeckAAlbumArtQueueItemId = deckAAlbumArt.QueueItemId,
+            DeckAAlbumArtSource = deckAAlbumArt.AlbumArtSource,
+            DeckBAlbumArtQueueItemId = deckBAlbumArt.QueueItemId,
+            DeckBAlbumArtSource = deckBAlbumArt.AlbumArtSource,
+            NextDeckQueueItemId = _nextDeckQueueItemId,
+            DeckAQueue = _deckAQueue.ToList(),
+            DeckBQueue = _deckBQueue.ToList(),
+            SelectedSpotifyPlaylist = SelectedSpotifyPlaylist,
+            SelectedSpotifyTrackKey = TrackKey(SelectedSpotifyTrack),
+            SpotifySearchQuery = SpotifySearchQuery,
+            SelectedSpotifySearchTrackKey = TrackKey(SelectedSpotifySearchTrack),
+            SpotifyPreviewTracks = SpotifyPreviewTracks.ToList(),
+            SpotifySearchResults = SpotifySearchResults.ToList(),
+            SelectedImportedSpotifyPlaylistId = SelectedImportedSpotifyPlaylist?.SpotifyPlaylistId,
+            SelectedImportedSpotifyTrackKey = TrackKey(SelectedImportedSpotifyTrack),
+            LocalMusicSearchQuery = LocalMusicSearchQuery,
+            LocalMusicFolderPath = LocalMusicFolderPath,
+            LocalMusicSortOption = SelectedLocalMusicSortOption,
+            SelectedLocalPlaylistId = SelectedLocalMusicPlaylist?.Id,
+            SelectedLocalFilePath = SelectedLocalMusicTrack?.FilePath
+        };
+    }
+
+    private DeckAlbumArtSnapshot CreateDeckAlbumArtSnapshot(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        var displayItem = ResolveDeckDisplayItem(normalizedDeckName);
+        if (displayItem is null)
+        {
+            return new DeckAlbumArtSnapshot(null, null);
+        }
+
+        var source = ResolveDeckAlbumArtSource(normalizedDeckName);
+        if (!HasUsableAlbumArtSource(source))
+        {
+            source = normalizedDeckName == "Deck B"
+                ? _nextDeckAlbumArtSource
+                : _currentDeckAlbumArtSource;
+        }
+
+        return HasUsableAlbumArtSource(source)
+            ? new DeckAlbumArtSnapshot(displayItem.Id, source)
+            : new DeckAlbumArtSnapshot(displayItem.Id, null);
+    }
+
+    private RestoredDeckAlbumArt CreateRestoredDeckAlbumArt(
+        string deckName,
+        int? queueItemId,
+        string? albumArtSource)
+    {
+        if (queueItemId is null || !HasUsableAlbumArtSource(albumArtSource))
+        {
+            return new RestoredDeckAlbumArt(null, null);
+        }
+
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        return QueueForDeck(normalizedDeckName).Any(item => item.Id == queueItemId.Value)
+            ? new RestoredDeckAlbumArt(queueItemId, albumArtSource)
+            : new RestoredDeckAlbumArt(null, null);
+    }
+
+    private sealed record DeckAlbumArtSnapshot(int? QueueItemId, string? AlbumArtSource);
+
+    private sealed record RestoredDeckAlbumArt(int? QueueItemId, string? AlbumArtSource);
 
     private IEnumerable<DancePilotQueueItem> NormalizeQueueItems(IEnumerable<DancePilotQueueItem> items, string deckName)
     {
@@ -4409,7 +4468,22 @@ public sealed class MainPageViewModel : ObservableObject
             return _currentPlaybackAlbumArtUrl;
         }
 
+        var restoredArtSource = ResolveRestoredDeckAlbumArtSource(deckName, displayItem.Id);
+        if (HasUsableAlbumArtSource(restoredArtSource))
+        {
+            return restoredArtSource;
+        }
+
         return itemArtSource;
+    }
+
+    private string? ResolveRestoredDeckAlbumArtSource(string deckName, int queueItemId)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        return _restoredDeckAlbumArt.TryGetValue(normalizedDeckName, out var restored)
+            && restored.QueueItemId == queueItemId
+            ? restored.AlbumArtSource
+            : null;
     }
 
     private string? ResolveQueueItemAlbumArtSource(DancePilotQueueItem item)
@@ -5270,8 +5344,8 @@ public sealed class MainPageViewModel : ObservableObject
         }
     }
 
-    private static bool ShouldReplaceQueueAlbumArtWithCachedUri(DancePilotQueueItem item) =>
-        item.Source == SongSources.Local || !HasUsableAlbumArtSource(item.AlbumArtUrl);
+    private static bool ShouldReplaceQueueAlbumArtWithCachedUri(DancePilotQueueItem _) =>
+        true;
 
     private void RefreshDeckAfterAlbumArtUpdate(string deckName, int itemId)
     {
