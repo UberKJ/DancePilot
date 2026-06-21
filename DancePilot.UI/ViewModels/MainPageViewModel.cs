@@ -4483,7 +4483,8 @@ public sealed class MainPageViewModel : ObservableObject
     private DancePilotQueueItem? FindTransitionTarget(string? deckName = null)
     {
         var resolvedDeckName = NormalizeDeckName(deckName ?? ResolveTransitionDeckName());
-        return GetNextDeckQueueItem(resolvedDeckName, includeFirstIfNoLastPlayed: true);
+        return FindSelectedDeckQueueItem(resolvedDeckName)
+            ?? GetNextDeckQueueItem(resolvedDeckName, includeFirstIfNoLastPlayed: true);
     }
 
     private DancePilotQueueItem? GetNextDeckQueueItem(string deckName, bool includeFirstIfNoLastPlayed = false)
@@ -4538,12 +4539,13 @@ public sealed class MainPageViewModel : ObservableObject
 
     private DancePilotQueueItem? FindSelectedDeckQueueItem(string deckName)
     {
-        if (!_selectedDeckQueueItemIds.TryGetValue(deckName, out var selectedId) || selectedId is null)
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        if (!_selectedDeckQueueItemIds.TryGetValue(normalizedDeckName, out var selectedId) || selectedId is null)
         {
             return null;
         }
 
-        return QueueForDeck(deckName).FirstOrDefault(item => item.Id == selectedId.Value);
+        return QueueForDeck(normalizedDeckName).FirstOrDefault(item => item.Id == selectedId.Value);
     }
 
     private int? GetLastPlayedDeckQueueItemId(string deckName)
@@ -4577,7 +4579,8 @@ public sealed class MainPageViewModel : ObservableObject
             return null;
         }
 
-        var next = GetNextDeckQueueItem(normalizedDeckName, includeFirstIfNoLastPlayed: true);
+        var next = FindSelectedDeckQueueItem(normalizedDeckName)
+            ?? GetNextDeckQueueItem(normalizedDeckName, includeFirstIfNoLastPlayed: true);
         if (next is not null)
         {
             return next;
@@ -5359,6 +5362,11 @@ public sealed class MainPageViewModel : ObservableObject
 
         RenumberQueue(queue, normalizedDeckName);
         ActiveDeckName = normalizedDeckName;
+        if (selectQueuedItem)
+        {
+            _selectedDeckQueueItemIds[normalizedDeckName] = queuedItem.Id;
+        }
+
         RefreshActiveDeckQueue();
         if (selectQueuedItem)
         {

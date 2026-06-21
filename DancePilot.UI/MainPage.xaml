@@ -851,10 +851,12 @@
                             <ColumnDefinition Width="120" />
                         </Grid.ColumnDefinitions>
                         <TextBox
+                            x:Name="SpotifySearchBox"
                             Text="{x:Bind ViewModel.SpotifySearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                             PlaceholderText="Search Spotify by song, artist, or album"
                             MinHeight="40"
-                            FontSize="15" />
+                            FontSize="15"
+                            KeyUp="SpotifySearchBox_KeyUp" />
                         <Button Grid.Column="1" Command="{x:Bind ViewModel.SearchSpotifyTracksCommand}" Content="SEARCH" Style="{StaticResource ChromeButtonStyle}" />
                         <Button Grid.Column="2" Command="{x:Bind ViewModel.PlaySelectedSpotifySearchTrackCommand}" Content="CUE" Style="{StaticResource ChromeButtonStyle}" />
                     </Grid>
@@ -962,10 +964,12 @@
                             <ColumnDefinition Width="110" />
                         </Grid.ColumnDefinitions>
                         <TextBox
+                            x:Name="LocalMusicSearchBox"
                             Text="{x:Bind ViewModel.LocalMusicSearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                             PlaceholderText="Filter local song mixes"
                             MinHeight="40"
-                            FontSize="15" />
+                            FontSize="15"
+                            KeyUp="LocalMusicSearchBox_KeyUp" />
                         <ComboBox
                             Grid.Column="1"
                             ItemsSource="{x:Bind ViewModel.LocalMusicSortOptions}"

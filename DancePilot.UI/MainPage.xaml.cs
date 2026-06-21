@@ -86,6 +86,28 @@ public sealed partial class MainPage : Page
         }
     }
 
+    private async void SpotifySearchBox_KeyUp(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != VirtualKey.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await ViewModel.SearchSpotifyTracksCommand.ExecuteAsync(null);
+    }
+
+    private async void LocalMusicSearchBox_KeyUp(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != VirtualKey.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await ViewModel.SearchLocalMusicCommand.ExecuteAsync(null);
+    }
+
     private async void QueueList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
         if (sender is not ListView list)
