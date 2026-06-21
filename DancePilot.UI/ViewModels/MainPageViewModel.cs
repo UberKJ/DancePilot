@@ -2386,7 +2386,7 @@ public sealed class MainPageViewModel : ObservableObject
             if (restored)
             {
                 CacheDeckAlbumArtForCurrentQueues();
-                QueueSessionStateSave();
+                await SaveSessionStateAsync();
             }
         }
     }
@@ -2562,8 +2562,8 @@ public sealed class MainPageViewModel : ObservableObject
             DeckBAlbumArtQueueItemId = deckBAlbumArt.QueueItemId,
             DeckBAlbumArtSource = deckBAlbumArt.AlbumArtSource,
             NextDeckQueueItemId = _nextDeckQueueItemId,
-            DeckAQueue = _deckAQueue.ToList(),
-            DeckBQueue = _deckBQueue.ToList(),
+            DeckAQueue = CreateDeckQueueStateSnapshot("Deck A", deckAAlbumArt),
+            DeckBQueue = CreateDeckQueueStateSnapshot("Deck B", deckBAlbumArt),
             SelectedSpotifyPlaylist = SelectedSpotifyPlaylist,
             SelectedSpotifyTrackKey = TrackKey(SelectedSpotifyTrack),
             SpotifySearchQuery = SpotifySearchQuery,
@@ -2600,6 +2600,18 @@ public sealed class MainPageViewModel : ObservableObject
         return HasUsableAlbumArtSource(source)
             ? new DeckAlbumArtSnapshot(displayItem.Id, source)
             : new DeckAlbumArtSnapshot(displayItem.Id, null);
+    }
+
+    private List<DancePilotQueueItem> CreateDeckQueueStateSnapshot(
+        string deckName,
+        DeckAlbumArtSnapshot albumArtSnapshot)
+    {
+        return QueueForDeck(NormalizeDeckName(deckName))
+            .Select(item => albumArtSnapshot.QueueItemId == item.Id
+                && HasUsableAlbumArtSource(albumArtSnapshot.AlbumArtSource)
+                    ? item with { AlbumArtUrl = albumArtSnapshot.AlbumArtSource }
+                    : item)
+            .ToList();
     }
 
     private RestoredDeckAlbumArt CreateRestoredDeckAlbumArt(
@@ -3705,19 +3717,54 @@ public sealed class MainPageViewModel : ObservableObject
         SpotifyOperationMessage = $"Viewing {normalizedDeckName} queue. Playback and transition cursor are unchanged.";
     }
 
+    private async Task<DancePilotQueueItem> PrepareQueueItemAlbumArtForPlaybackAsync(
+        string deckName,
+        DancePilotQueueItem queueItem)
+    {
+        await CacheQueuedAlbumArtAsync(deckName, queueItem.Id);
+        return QueueForDeck(NormalizeDeckName(deckName)).FirstOrDefault(item => item.Id == queueItem.Id)
+            ?? queueItem;
+    }
+
+    private async Task<LocalMusicTrack?> ResolveLocalQueueTrackAsync(DancePilotQueueItem queueItem)
+    {
+        var loadedTrack = _allLocalMusicTracks.FirstOrDefault(track =>
+            string.Equals(track.FilePath, queueItem.ExternalUri, StringComparison.OrdinalIgnoreCase));
+        if (loadedTrack is not null)
+        {
+            return loadedTrack;
+        }
+
+        if (string.IsNullOrWhiteSpace(queueItem.ExternalUri) || !File.Exists(queueItem.ExternalUri))
+        {
+            return null;
+        }
+
+        var tracks = await _localMusicLibraryService.LoadFromFilePathsAsync([queueItem.ExternalUri]);
+        var localTrack = tracks.FirstOrDefault();
+        if (localTrack is null)
+        {
+            return null;
+        }
+
+        _allLocalMusicTracks.Add(localTrack);
+        return localTrack;
+    }
+
     private async Task<bool> PlayDeckQueueItemAsync(DancePilotQueueItem queueItem, string? deckName = null, bool isTransition = false)
     {
-        var targetDeckName = deckName ?? ActiveDeckName;
+        var targetDeckName = NormalizeDeckName(deckName ?? ActiveDeckName);
         if (!string.Equals(ActiveDeckName, targetDeckName, StringComparison.Ordinal))
         {
             ActiveDeckName = targetDeckName;
             RefreshActiveDeckQueue();
         }
 
+        queueItem = await PrepareQueueItemAlbumArtForPlaybackAsync(targetDeckName, queueItem);
+
         if (queueItem.Source == SongSources.Local)
         {
-            var localTrack = _allLocalMusicTracks.FirstOrDefault(track =>
-                string.Equals(track.FilePath, queueItem.ExternalUri, StringComparison.OrdinalIgnoreCase));
+            var localTrack = await ResolveLocalQueueTrackAsync(queueItem);
             if (localTrack is not null)
             {
                 SelectedLocalMusicTrack = localTrack;
@@ -3804,13 +3851,13 @@ public sealed class MainPageViewModel : ObservableObject
         {
             var localTrack = _allLocalMusicTracks.FirstOrDefault(track =>
                 string.Equals(track.FilePath, queueItem.ExternalUri, StringComparison.OrdinalIgnoreCase));
-            if (localTrack is null)
+            if (localTrack is null && !File.Exists(queueItem.ExternalUri))
             {
-                validationMessage = $"Local track is no longer loaded for {queueItem.Title}.";
+                validationMessage = $"Local file was not found: {queueItem.Title}.";
                 return false;
             }
 
-            if (!File.Exists(localTrack.FilePath))
+            if (localTrack is not null && !File.Exists(localTrack.FilePath))
             {
                 validationMessage = $"Local file was not found: {localTrack.FileName}.";
                 return false;
@@ -4459,6 +4506,12 @@ public sealed class MainPageViewModel : ObservableObject
             return null;
         }
 
+        var restoredArtSource = ResolveRestoredDeckAlbumArtSource(deckName, displayItem.Id);
+        if (HasUsableAlbumArtSource(restoredArtSource))
+        {
+            return restoredArtSource;
+        }
+
         var itemArtSource = ResolveQueueItemAlbumArtSource(displayItem);
         if (HasUsableAlbumArtSource(itemArtSource))
         {
@@ -4470,12 +4523,6 @@ public sealed class MainPageViewModel : ObservableObject
             && !string.IsNullOrWhiteSpace(_currentPlaybackAlbumArtUrl))
         {
             return _currentPlaybackAlbumArtUrl;
-        }
-
-        var restoredArtSource = ResolveRestoredDeckAlbumArtSource(deckName, displayItem.Id);
-        if (HasUsableAlbumArtSource(restoredArtSource))
-        {
-            return restoredArtSource;
         }
 
         return itemArtSource;
@@ -5243,6 +5290,21 @@ public sealed class MainPageViewModel : ObservableObject
 
     private async Task<DancePilotQueueItem> ResolveQueueItemAlbumArtAsync(DancePilotQueueItem item)
     {
+        var cachedAlbumArtUri = await ResolveCachedAlbumArtUriAsync(item);
+        if (HasUsableAlbumArtSource(cachedAlbumArtUri))
+        {
+            return item with { AlbumArtUrl = cachedAlbumArtUri };
+        }
+
+        if (item.Source == SongSources.Local)
+        {
+            var embeddedAlbumArtUri = await CacheLocalEmbeddedAlbumArtAsync(item);
+            if (HasUsableAlbumArtSource(embeddedAlbumArtUri))
+            {
+                return item with { AlbumArtUrl = embeddedAlbumArtUri };
+            }
+        }
+
         if (HasUsableAlbumArtSource(item.AlbumArtUrl))
         {
             return item;
@@ -5275,6 +5337,32 @@ public sealed class MainPageViewModel : ObservableObject
         }
 
         return await ResolveExternalQueueItemAlbumArtAsync(item);
+    }
+
+    private async Task<string?> ResolveCachedAlbumArtUriAsync(DancePilotQueueItem item)
+    {
+        try
+        {
+            return await _albumArtCacheService.GetCachedAlbumArtUriAsync(item);
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write($"Album art cache lookup skipped for {item.Title}: {ex.Message}");
+            return null;
+        }
+    }
+
+    private async Task<string?> CacheLocalEmbeddedAlbumArtAsync(DancePilotQueueItem item)
+    {
+        try
+        {
+            return await _albumArtCacheService.CacheAlbumArtAsync(item);
+        }
+        catch (Exception ex)
+        {
+            StartupLog.Write($"Embedded local album art lookup skipped for {item.Title}: {ex.Message}");
+            return null;
+        }
     }
 
     private async Task<DancePilotQueueItem> ResolveSpotifyQueueItemAlbumArtAsync(DancePilotQueueItem item)
@@ -5339,7 +5427,16 @@ public sealed class MainPageViewModel : ObservableObject
 
     private void RefreshDeckAfterAlbumArtUpdate(string deckName, int itemId)
     {
-        if (IsDeckDisplayItem(deckName, itemId))
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        var updatedItem = QueueForDeck(normalizedDeckName).FirstOrDefault(item => item.Id == itemId);
+        if (updatedItem is not null
+            && IsDeckDisplayItem(normalizedDeckName, itemId)
+            && HasUsableAlbumArtSource(updatedItem.AlbumArtUrl))
+        {
+            _restoredDeckAlbumArt[normalizedDeckName] = new RestoredDeckAlbumArt(itemId, updatedItem.AlbumArtUrl);
+        }
+
+        if (IsDeckDisplayItem(normalizedDeckName, itemId))
         {
             RefreshActiveDeckQueue();
             RefreshDeckDisplayProperties();
@@ -5505,6 +5602,8 @@ public sealed class MainPageViewModel : ObservableObject
         }
 
         RefreshActiveDeckQueue();
+        RefreshDeckDisplayProperties();
+        CacheDeckAlbumArtForQueue(normalizedDeckName);
         QueueSessionStateSave();
     }
 

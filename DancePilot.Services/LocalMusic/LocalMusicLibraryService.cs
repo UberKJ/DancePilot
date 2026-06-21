@@ -210,7 +210,8 @@ public sealed class LocalMusicLibraryService
         {
             using var file = TagFile.Create(fileInfo.FullName);
             var tag = file.Tag;
-            var albumArtUrl = TryResolveCachedAlbumArt(fileInfo);
+            var albumArtUrl = TryResolveCachedAlbumArt(fileInfo)
+                ?? CacheEmbeddedAlbumArt(fileInfo, tag.Pictures.FirstOrDefault());
             return new LocalFileMetadata(
                 Clean(tag.Title),
                 FirstNonBlank(tag.FirstPerformer, tag.FirstAlbumArtist),

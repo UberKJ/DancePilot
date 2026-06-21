@@ -73,6 +73,15 @@ public sealed class AlbumArtCacheService
         }
     }
 
+    public async Task<string?> GetCachedAlbumArtUriAsync(
+        DancePilotQueueItem item,
+        CancellationToken cancellationToken = default)
+    {
+        var cacheKey = CreateCacheKey(item);
+        var existing = await _repository.GetAsync(cacheKey, cancellationToken);
+        return await EnsureCachedFileAsync(existing, cancellationToken);
+    }
+
     public static string CreateCacheKey(DancePilotQueueItem item)
     {
         var stableId = CreateStableCacheId(item);

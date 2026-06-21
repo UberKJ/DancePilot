@@ -3,6 +3,7 @@ using DancePilot.Core.Spotify;
 using DancePilot.Data.Migrations;
 using DancePilot.Data.Repositories;
 using DancePilot.Data.Storage;
+using DancePilot.Services.Media;
 using Microsoft.Data.Sqlite;
 
 namespace DancePilot.Tests;
@@ -104,6 +105,65 @@ public sealed class PlaybackDatabaseTests
             if (File.Exists(databasePath))
             {
                 File.Delete(databasePath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task AlbumArtCacheService_ReturnsCachedFileUriBeforeNetworkLookup()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), "DancePilot.Tests", $"{Guid.NewGuid():N}.sqlite");
+        var cacheFolder = Path.Combine(Path.GetTempPath(), "DancePilot.Tests", $"{Guid.NewGuid():N}", "AlbumArt");
+        Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
+
+        try
+        {
+            var connectionFactory = new SqliteConnectionFactory(new DatabaseOptions
+            {
+                DatabasePath = databasePath
+            });
+            var repository = new AlbumArtCacheRepository(connectionFactory);
+            var item = new DancePilotQueueItem
+            {
+                Id = 1,
+                Source = SongSources.Spotify,
+                ExternalUri = "spotify:track:cached-cover",
+                Title = "Cached Cover",
+                Artist = "DancePilot"
+            };
+            var cacheKey = AlbumArtCacheService.CreateCacheKey(item);
+            await repository.SaveAsync(new AlbumArtCacheEntry
+            {
+                CacheKey = cacheKey,
+                Source = item.Source,
+                ExternalUri = item.ExternalUri,
+                Title = item.Title,
+                Artist = item.Artist,
+                OriginalUri = "https://image.example/cached-cover.jpg",
+                ContentType = "image/jpeg",
+                ImageBytes = new byte[] { 1, 2, 3, 4 },
+                LocalFilePath = null
+            });
+
+            var service = new AlbumArtCacheService(repository, new HttpClient(), cacheFolder);
+            var cachedUri = await service.GetCachedAlbumArtUriAsync(item);
+
+            Assert.NotNull(cachedUri);
+            var cachedPath = new Uri(cachedUri).LocalPath;
+            Assert.True(File.Exists(cachedPath));
+            Assert.Equal(new byte[] { 1, 2, 3, 4 }, await File.ReadAllBytesAsync(cachedPath));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+
+            if (Directory.Exists(cacheFolder))
+            {
+                Directory.Delete(Path.GetDirectoryName(cacheFolder)!, recursive: true);
             }
         }
     }
