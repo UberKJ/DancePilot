@@ -159,6 +159,49 @@ public sealed class DancePilotDatabaseMigrator
             """, cancellationToken);
 
         await ExecuteAsync(connection, """
+            CREATE TABLE IF NOT EXISTS local_tracks (
+                id INTEGER PRIMARY KEY,
+                file_path TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                artist TEXT NOT NULL,
+                album TEXT,
+                duration_ms INTEGER,
+                extension TEXT NOT NULL,
+                folder TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                file_size INTEGER,
+                last_modified_utc TEXT NOT NULL,
+                album_art_path TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            """, cancellationToken);
+
+        await AddColumnIfMissingAsync(connection, "local_tracks", "file_path", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "title", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "artist", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "album", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "duration_ms", "INTEGER", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "extension", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "folder", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "file_name", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "file_size", "INTEGER", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "last_modified_utc", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "album_art_path", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "created_at", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "updated_at", "TEXT", cancellationToken);
+
+        await ExecuteAsync(connection, """
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_local_tracks_file_path
+            ON local_tracks(file_path);
+            """, cancellationToken);
+
+        await ExecuteAsync(connection, """
+            CREATE INDEX IF NOT EXISTS ix_local_tracks_search
+            ON local_tracks(title, artist, album, file_name);
+            """, cancellationToken);
+
+        await ExecuteAsync(connection, """
             CREATE TABLE IF NOT EXISTS local_playlists (
                 id INTEGER PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,

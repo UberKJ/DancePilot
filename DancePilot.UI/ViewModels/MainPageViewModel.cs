@@ -60,6 +60,8 @@ public sealed partial class MainPageViewModel : ObservableObject
     private readonly PlaybackSettingsRepository _playbackSettingsRepository;
     private readonly SessionStateRepository _sessionStateRepository;
     private readonly SpotifyLibraryRepository _spotifyLibraryRepository;
+    private readonly LocalMusicRepository _localMusicRepository;
+    private readonly LocalLibrarySettingsRepository _localLibrarySettingsRepository;
     private readonly LocalPlaylistRepository _localPlaylistRepository;
     private readonly LocalMusicLibraryService _localMusicLibraryService;
     private readonly LocalAudioAnalysisService _localAudioAnalysisService;
@@ -114,7 +116,10 @@ public sealed partial class MainPageViewModel : ObservableObject
     private DancePilotQueueItem? _selectedQueueViewDeckQueueItem;
     private string _localMusicSearchQuery = string.Empty;
     private string _localMusicFolderPath = Environment.GetFolderPath(Environment.SpecialFolder.MyMusic);
-    private string _localLibraryStatus = "Pick a music folder or click LOCAL to scan your Windows Music folder.";
+    private string _localLibraryStatus = "Loaded 0 saved local tracks. Scan Local Library to build the index.";
+    private int _localLibrarySavedTrackCount;
+    private DateTimeOffset? _localLibraryLastScanCompletedAt;
+    private string _localLibraryAlbumArtCacheFolderPath = new LocalLibrarySettings().AlbumArtCacheFolderPath;
     private string _localPlaylistStatus = "Create or select a local playlist for quick deck adds.";
     private string _selectedLocalMusicSortOption = LocalSortFolder;
     private string _activeSource = SourceSpotify;
@@ -192,6 +197,8 @@ public sealed partial class MainPageViewModel : ObservableObject
         _playbackSettingsRepository = services.PlaybackSettingsRepository;
         _sessionStateRepository = services.SessionStateRepository;
         _spotifyLibraryRepository = services.SpotifyLibraryRepository;
+        _localMusicRepository = services.LocalMusicRepository;
+        _localLibrarySettingsRepository = services.LocalLibrarySettingsRepository;
         _localPlaylistRepository = services.LocalPlaylistRepository;
         _localMusicLibraryService = services.LocalMusicLibraryService;
         _localAudioAnalysisService = services.LocalAudioAnalysisService;
@@ -249,8 +256,9 @@ public sealed partial class MainPageViewModel : ObservableObject
         AddSelectedSourceToDeckACommand = new AsyncRelayCommand(() => QueueSelectedSourceToDeckAsync("Deck A"));
         AddSelectedSourceToDeckBCommand = new AsyncRelayCommand(() => QueueSelectedSourceToDeckAsync("Deck B"));
         AddLoadedPlaylistToActiveDeckCommand = new AsyncRelayCommand(AddLoadedPlaylistToActiveDeckAsync);
-        RandomizePlaylistToDeckACommand = new AsyncRelayCommand(() => RandomizeActiveSourceToDeckAsync("Deck A"));
-        RandomizePlaylistToDeckBCommand = new AsyncRelayCommand(() => RandomizeActiveSourceToDeckAsync("Deck B"));
+        ReplaceLoadedPlaylistOnActiveDeckCommand = new AsyncRelayCommand(ReplaceLoadedPlaylistOnActiveDeckAsync);
+        RandomizeDeckAQueueCommand = new AsyncRelayCommand(() => RandomizeDeckQueueAsync("Deck A"));
+        RandomizeDeckBQueueCommand = new AsyncRelayCommand(() => RandomizeDeckQueueAsync("Deck B"));
         MoveSelectedQueueItemUpCommand = new RelayCommand(MoveSelectedQueueItemUp);
         MoveSelectedQueueItemDownCommand = new RelayCommand(MoveSelectedQueueItemDown);
         RemoveSelectedQueueItemCommand = new RelayCommand(RemoveSelectedQueueItem);
@@ -316,6 +324,7 @@ public sealed partial class MainPageViewModel : ObservableObject
             await RefreshPlaybackCollectionsAsync(loadImportedTracks: false);
             await LoadLocalPlaylistsCoreAsync();
             await RestoreSessionStateAsync();
+            await LoadSavedLocalLibraryAsync();
             await RefreshSpotifyConnectionStatusAsync();
 
             StartupLog.Write("MainPageViewModel async initialization complete");

@@ -28,6 +28,8 @@ public sealed record LocalMusicTrack
 
     public required string Folder { get; init; }
 
+    public long? FileSize { get; init; }
+
     public DateTimeOffset LastModifiedAt { get; init; }
 
     public string FileName => Path.GetFileName(FilePath);

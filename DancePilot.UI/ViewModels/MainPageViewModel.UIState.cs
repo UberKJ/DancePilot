@@ -274,6 +274,18 @@ public sealed partial class MainPageViewModel
         private set => SetProperty(ref _localLibraryStatus, value);
     }
 
+    public string LocalLibraryTrackCountDisplay => $"Loaded {_localLibrarySavedTrackCount:N0} saved local tracks";
+
+    public string LocalLibraryLastScanDisplay => _localLibraryLastScanCompletedAt is null
+        ? "Last scan: never"
+        : $"Last scan: {_localLibraryLastScanCompletedAt:g}";
+
+    public string LocalLibraryAlbumArtCacheDisplay => $"Album art cache: {_localLibraryAlbumArtCacheFolderPath}";
+
+    public string LocalLibraryScanButtonText => _localLibrarySavedTrackCount > 0
+        ? "Rescan Local Library"
+        : "Scan Local Library";
+
     public string LocalPlaylistStatus
     {
         get => _localPlaylistStatus;
@@ -305,7 +317,7 @@ public sealed partial class MainPageViewModel
                     SelectedPlaybackMode = SpotifyPlaybackModes.LocalFilesFuture;
                     if (!_isRestoringSessionState)
                     {
-                        _ = LoadLocalMusicAsync();
+                        _ = LoadSavedLocalLibraryAsync();
                     }
                 }
                 else if (normalized == SourceSpotify && SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
@@ -535,7 +547,7 @@ public sealed partial class MainPageViewModel
                     && !_isRestoringSessionState
                     && !_suppressLocalMusicAutoLoad)
                 {
-                    _ = LoadLocalMusicAsync();
+                    _ = LoadSavedLocalLibraryAsync();
                 }
 
                 QueueSessionStateSave();
@@ -1080,9 +1092,11 @@ public sealed partial class MainPageViewModel
 
     public IAsyncRelayCommand AddLoadedPlaylistToActiveDeckCommand { get; }
 
-    public IAsyncRelayCommand RandomizePlaylistToDeckACommand { get; }
+    public IAsyncRelayCommand ReplaceLoadedPlaylistOnActiveDeckCommand { get; }
 
-    public IAsyncRelayCommand RandomizePlaylistToDeckBCommand { get; }
+    public IAsyncRelayCommand RandomizeDeckAQueueCommand { get; }
+
+    public IAsyncRelayCommand RandomizeDeckBQueueCommand { get; }
 
     public IRelayCommand MoveSelectedQueueItemUpCommand { get; }
 

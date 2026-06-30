@@ -25,6 +25,8 @@ namespace DancePilot.UI.ViewModels;
 
 public sealed partial class MainPageViewModel
 {
+    private const int LocalLibraryPageSize = 500;
+
     private async Task LoadLocalMusicAsync()
     {
         try
@@ -44,16 +46,45 @@ public sealed partial class MainPageViewModel
                 return;
             }
 
-            LocalLibraryStatus = $"Scanning {musicFolder}...";
-            var tracks = await _localMusicLibraryService.LoadFromFolderAsync(musicFolder);
-            _allLocalMusicTracks.Clear();
-            _allLocalMusicTracks.AddRange(tracks);
-            ApplyLocalMusicFilter();
+            var startedAt = DateTimeOffset.UtcNow;
+            var previousSettings = await _localLibrarySettingsRepository.LoadAsync();
+            var scanSettings = previousSettings with
+            {
+                LibraryFolderPath = musicFolder,
+                LastScanStartedAt = startedAt,
+                AlbumArtCacheFolderPath = LocalMusicLibraryService.DefaultAlbumArtCacheFolderPath
+            };
+            await _localLibrarySettingsRepository.SaveAsync(scanSettings);
+            UpdateLocalLibraryDisplay(scanSettings);
 
-            LocalLibraryStatus = tracks.Count == 0
-                ? $"No supported music files found in {musicFolder}. MP3, MP4, WAV, M4A, AAC, WMA, FLAC, AIFF, OGG, and OPUS are included."
-                : $"Loaded {tracks.Count} local audio file(s) from {musicFolder}.";
-            CurrentOutputStatus = "Local file mode is ready.";
+            LocalLibraryStatus = $"Scanning local library: {musicFolder}...";
+            var scannedTracks = await _localMusicLibraryService.LoadFromFolderAsync(musicFolder);
+            var upserted = await _localMusicRepository.UpsertTracksAsync(scannedTracks);
+            var removed = await _localMusicRepository.RemoveMissingTracksAsync(scannedTracks.Select(track => track.FilePath));
+            var stats = await _localMusicRepository.GetLibraryStatsAsync();
+            var completedAt = DateTimeOffset.UtcNow;
+            var completedSettings = scanSettings with
+            {
+                LastScanCompletedAt = completedAt,
+                TrackCount = stats.TrackCount
+            };
+            await _localLibrarySettingsRepository.SaveAsync(completedSettings);
+            UpdateLocalLibraryDisplay(completedSettings);
+
+            var savedTracks = await _localMusicRepository.GetAllTracksAsync(LocalLibraryPageSize);
+            ReplaceLocalMusicResults(savedTracks);
+
+            LocalLibraryStatus = stats.TrackCount == 0
+                ? $"Loaded 0 saved local tracks. Last scan: {completedAt:g}."
+                : $"Loaded {stats.TrackCount:N0} saved local tracks. Last scan: {completedAt:g}.";
+            if (removed > 0)
+            {
+                LocalLibraryStatus += $" Removed {removed:N0} missing track(s).";
+            }
+
+            CurrentOutputStatus = upserted == 1
+                ? "Local library index saved 1 track."
+                : $"Local library index saved {upserted:N0} track(s).";
             SpotifyOperationMessage = LocalLibraryStatus;
             QueueSessionStateSave();
         }
@@ -68,6 +99,36 @@ public sealed partial class MainPageViewModel
     {
         LocalMusicFolderPath = folderPath;
         await LoadLocalMusicAsync();
+    }
+
+    private async Task LoadSavedLocalLibraryAsync()
+    {
+        try
+        {
+            var settings = await _localLibrarySettingsRepository.LoadAsync();
+            var stats = await _localMusicRepository.GetLibraryStatsAsync();
+            var displaySettings = settings with { TrackCount = stats.TrackCount };
+            LocalMusicFolderPath = displaySettings.LibraryFolderPath;
+            UpdateLocalLibraryDisplay(displaySettings);
+
+            var tracks = string.IsNullOrWhiteSpace(LocalMusicSearchQuery)
+                ? await _localMusicRepository.GetAllTracksAsync(LocalLibraryPageSize)
+                : await _localMusicRepository.SearchTracksAsync(LocalMusicSearchQuery, LocalLibraryPageSize);
+            ReplaceLocalMusicResults(tracks);
+
+            LocalLibraryStatus = stats.TrackCount == 0
+                ? "Loaded 0 saved local tracks. Scan Local Library to build the index."
+                : $"Loaded {stats.TrackCount:N0} saved local tracks.";
+            if (ActiveSource == SourceLocal)
+            {
+                SpotifyOperationMessage = LocalLibraryStatus;
+            }
+        }
+        catch (Exception ex)
+        {
+            LocalLibraryStatus = $"Saved local library could not be loaded: {ex.Message}";
+            SpotifyOperationMessage = LocalLibraryStatus;
+        }
     }
 
     private async Task LoadLocalPlaylistsAsync()
@@ -191,25 +252,49 @@ public sealed partial class MainPageViewModel
     private async Task<IReadOnlyList<LocalMusicTrack>> LoadLocalPlaylistTracksAsync(LocalMusicPlaylist playlist)
     {
         var paths = await _localPlaylistRepository.GetTrackFilePathsAsync(playlist.Id);
-        var tracks = await _localMusicLibraryService.LoadFromFilePathsAsync(paths);
         var order = paths
             .Select((path, index) => new { Path = path, Index = index })
             .ToDictionary(pair => pair.Path, pair => pair.Index, StringComparer.OrdinalIgnoreCase);
+        var tracks = new List<LocalMusicTrack>();
+        foreach (var path in paths)
+        {
+            var track = await _localMusicRepository.GetTrackByPathAsync(path);
+            if (track is not null)
+            {
+                tracks.Add(track);
+            }
+        }
+
         return tracks
             .OrderBy(track => order.GetValueOrDefault(track.FilePath, int.MaxValue))
             .ThenBy(track => track.FileName, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
-    private Task SearchLocalMusicAsync()
+    private async Task SearchLocalMusicAsync()
     {
-        ApplyLocalMusicFilter();
-        LocalLibraryStatus = LocalMusicTracks.Count == _allLocalMusicTracks.Count
-            ? $"Showing all {_allLocalMusicTracks.Count} local audio file(s)."
-            : $"Showing {LocalMusicTracks.Count} of {_allLocalMusicTracks.Count} local audio file(s).";
-        SpotifyOperationMessage = LocalLibraryStatus;
-        QueueSessionStateSave();
-        return Task.CompletedTask;
+        try
+        {
+            var stats = await _localMusicRepository.GetLibraryStatsAsync();
+            var settings = await _localLibrarySettingsRepository.LoadAsync();
+            UpdateLocalLibraryDisplay(settings with { TrackCount = stats.TrackCount });
+
+            var tracks = string.IsNullOrWhiteSpace(LocalMusicSearchQuery)
+                ? await _localMusicRepository.GetAllTracksAsync(LocalLibraryPageSize)
+                : await _localMusicRepository.SearchTracksAsync(LocalMusicSearchQuery, LocalLibraryPageSize);
+            ReplaceLocalMusicResults(tracks);
+
+            LocalLibraryStatus = string.IsNullOrWhiteSpace(LocalMusicSearchQuery)
+                ? $"Loaded {stats.TrackCount:N0} saved local tracks."
+                : $"Showing {LocalMusicTracks.Count:N0} saved local track(s) for \"{LocalMusicSearchQuery.Trim()}\".";
+            SpotifyOperationMessage = LocalLibraryStatus;
+            QueueSessionStateSave();
+        }
+        catch (Exception ex)
+        {
+            LocalLibraryStatus = $"Saved local library search failed: {ex.Message}";
+            SpotifyOperationMessage = LocalLibraryStatus;
+        }
     }
 
     private void ApplyLocalMusicFilter()
@@ -225,6 +310,33 @@ public sealed partial class MainPageViewModel
         SelectedLocalMusicTrack = LocalMusicTracks.FirstOrDefault(track =>
             string.Equals(track.FilePath, selectedFilePath, StringComparison.OrdinalIgnoreCase))
             ?? LocalMusicTracks.FirstOrDefault();
+    }
+
+    private void ReplaceLocalMusicResults(IEnumerable<LocalMusicTrack> tracks)
+    {
+        var selectedFilePath = SelectedLocalMusicTrack?.FilePath;
+        var sortedTracks = SortLocalMusicTracks(tracks)
+            .Take(LocalLibraryPageSize)
+            .ToList();
+        _allLocalMusicTracks.Clear();
+        _allLocalMusicTracks.AddRange(sortedTracks);
+        ReplaceCollection(LocalMusicTracks, sortedTracks);
+        SelectedLocalMusicTrack = LocalMusicTracks.FirstOrDefault(track =>
+            string.Equals(track.FilePath, selectedFilePath, StringComparison.OrdinalIgnoreCase))
+            ?? LocalMusicTracks.FirstOrDefault();
+    }
+
+    private void UpdateLocalLibraryDisplay(LocalLibrarySettings settings)
+    {
+        _localLibrarySavedTrackCount = Math.Max(0, settings.TrackCount);
+        _localLibraryLastScanCompletedAt = settings.LastScanCompletedAt;
+        _localLibraryAlbumArtCacheFolderPath = string.IsNullOrWhiteSpace(settings.AlbumArtCacheFolderPath)
+            ? new LocalLibrarySettings().AlbumArtCacheFolderPath
+            : settings.AlbumArtCacheFolderPath;
+        OnPropertyChanged(nameof(LocalLibraryTrackCountDisplay));
+        OnPropertyChanged(nameof(LocalLibraryLastScanDisplay));
+        OnPropertyChanged(nameof(LocalLibraryAlbumArtCacheDisplay));
+        OnPropertyChanged(nameof(LocalLibraryScanButtonText));
     }
 
     private IEnumerable<LocalMusicTrack> SortLocalMusicTracks(IEnumerable<LocalMusicTrack> tracks) =>

@@ -58,6 +58,12 @@ public sealed partial class MainPageViewModel
             return null;
         }
 
+        var indexedTrack = await _localMusicRepository.GetTrackByPathAsync(localPath);
+        if (indexedTrack is not null)
+        {
+            return indexedTrack;
+        }
+
         var loadedTrack = _allLocalMusicTracks.FirstOrDefault(track =>
             string.Equals(track.FilePath, localPath, StringComparison.OrdinalIgnoreCase));
         if (loadedTrack is not null)
@@ -278,6 +284,74 @@ public sealed partial class MainPageViewModel
         }
 
         return QueueForDeck(normalizedDeckName).FirstOrDefault(item => item.Id == selectedId.Value);
+    }
+
+    private DancePilotQueueItem? FindDeckItemForUserPlay(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        if (IsDeckAudiblyPlaying(normalizedDeckName))
+        {
+            return null;
+        }
+
+        var queue = QueueForDeck(normalizedDeckName);
+        var selectedId = _selectedDeckQueueItemIds.GetValueOrDefault(normalizedDeckName);
+        var selectedVisibleItem = ResolveSelectedVisibleDeckQueueItem(normalizedDeckName);
+        var selectedItem = selectedVisibleItem ?? FindSelectedDeckQueueItem(normalizedDeckName);
+        DancePilotQueueItem? chosenItem;
+        if (selectedItem is not null)
+        {
+            chosenItem = selectedItem;
+        }
+        else
+        {
+            var selection = DancePilotDeckPlaySelector.FindItemForUserPlay(
+                queue,
+                selectedId,
+                isAudiblyPlaying: false,
+                lastPlayedId: _lastPlayedDeckQueueItemIds.GetValueOrDefault(normalizedDeckName));
+            if (selection.ShouldClearSelectedId)
+            {
+                _selectedDeckQueueItemIds[normalizedDeckName] = null;
+            }
+
+            chosenItem = selection.Item;
+        }
+
+        if (chosenItem is not null)
+        {
+            LogDeckPlaySelection(normalizedDeckName, selectedId, chosenItem);
+        }
+
+        return chosenItem;
+    }
+
+    private DancePilotQueueItem? ResolveSelectedVisibleDeckQueueItem(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        if (!string.Equals(ActiveDeckName, normalizedDeckName, StringComparison.Ordinal)
+            || SelectedActiveDeckQueueItem is null
+            || !string.Equals(SelectedActiveDeckQueueItem.DeckName, normalizedDeckName, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return QueueForDeck(normalizedDeckName).FirstOrDefault(item => item.Id == SelectedActiveDeckQueueItem.Id);
+    }
+
+    private void LogDeckPlaySelection(string deckName, int? selectedId, DancePilotQueueItem chosenItem)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        StartupLog.Write(
+            "Deck play selection: "
+            + $"deck={normalizedDeckName}; "
+            + $"selectedId={selectedId?.ToString() ?? "<null>"}; "
+            + $"lastPlayedId={_lastPlayedDeckQueueItemIds.GetValueOrDefault(normalizedDeckName)?.ToString() ?? "<null>"}; "
+            + $"chosenId={chosenItem.Id}; "
+            + $"title={chosenItem.Title}; "
+            + $"source={chosenItem.Source}; "
+            + $"localPath={chosenItem.LocalPath ?? "<null>"}; "
+            + $"externalUri={chosenItem.ExternalUri}");
     }
 
     private DancePilotQueueItem? FindSelectedPendingDeckQueueItem(string deckName)
@@ -642,11 +716,23 @@ public sealed partial class MainPageViewModel
 
     private async Task<int> QueueLocalTracksToDeckAsync(IEnumerable<LocalMusicTrack> tracks, string deckName, int? beforeItemId = null)
     {
-        return await QueueTrackDisplayItemsToDeckAsync(
-            tracks.Select(CreateTrackDisplayItem),
-            deckName,
-            "local track(s)",
-            beforeItemId);
+        var added = 0;
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        foreach (var track in tracks)
+        {
+            if (await QueueLocalTrackToDeckAsync(track, normalizedDeckName, announce: false, selectQueuedItem: added == 0, beforeItemId: beforeItemId))
+            {
+                added++;
+            }
+        }
+
+        if (added > 0)
+        {
+            SpotifyOperationMessage = $"Queued {added} local track(s) on {normalizedDeckName}.";
+            QueueSessionStateSave();
+        }
+
+        return added;
     }
 
     private async Task<bool> QueueLocalTrackToDeckAsync(
@@ -656,8 +742,9 @@ public sealed partial class MainPageViewModel
         bool selectQueuedItem = true,
         int? beforeItemId = null)
     {
+        var indexedTrack = await _localMusicRepository.GetTrackByPathAsync(track.FilePath) ?? track;
         return await QueueTrackDisplayItemToDeckAsync(
-            CreateTrackDisplayItem(track),
+            CreateTrackDisplayItem(indexedTrack),
             deckName,
             announce,
             selectQueuedItem,
@@ -967,8 +1054,8 @@ public sealed partial class MainPageViewModel
         if (added > 0)
         {
             SpotifyOperationMessage = playlists.Count == 1
-                ? $"Queued {added} track(s) from {playlists[0].Name} on {NormalizeDeckName(deckName)}."
-                : $"Queued {added} track(s) from {playlists.Count} playlist(s) on {NormalizeDeckName(deckName)}.";
+                ? $"Appended {added} songs to {NormalizeDeckName(deckName)} from {playlists[0].Name}."
+                : $"Appended {added} songs to {NormalizeDeckName(deckName)} from {playlists.Count} playlists.";
             QueueSessionStateSave();
         }
 
@@ -992,8 +1079,8 @@ public sealed partial class MainPageViewModel
         if (added > 0)
         {
             LocalPlaylistStatus = playlists.Count == 1
-                ? $"Queued {added} song(s) from {playlists[0].Name} on {NormalizeDeckName(deckName)}."
-                : $"Queued {added} song(s) from {playlists.Count} local playlist(s) on {NormalizeDeckName(deckName)}.";
+                ? $"Appended {added} songs to {NormalizeDeckName(deckName)} from {playlists[0].Name}."
+                : $"Appended {added} songs to {NormalizeDeckName(deckName)} from {playlists.Count} local playlists.";
             SpotifyOperationMessage = LocalPlaylistStatus;
             QueueSessionStateSave();
         }
@@ -1018,10 +1105,7 @@ public sealed partial class MainPageViewModel
                 return;
             }
 
-            await QueueTrackDisplayItemToDeckAsync(
-                CreateTrackDisplayItem(SelectedLocalMusicTrack),
-                normalizedDeckName,
-                beforeItemId: insertBeforeItemId);
+            await QueueLocalTrackToDeckAsync(SelectedLocalMusicTrack, normalizedDeckName, beforeItemId: insertBeforeItemId);
             return;
         }
 
@@ -1061,13 +1145,69 @@ public sealed partial class MainPageViewModel
         }
 
         var normalizedDeckName = NormalizeDeckName(ActiveDeckName);
+        var playlistName = ResolveLoadedPlaylistName();
         var added = await QueueSpotifyTracksToDeckAsync(tracks, normalizedDeckName);
         SpotifyOperationMessage = added > 0
-            ? $"Added {added} loaded playlist track(s) to {normalizedDeckName}."
+            ? $"Appended {added} songs to {normalizedDeckName} from {playlistName}."
             : "No playable loaded playlist tracks were added.";
+        QueueSessionStateSave();
     }
 
-    private async Task RandomizeActiveSourceToDeckAsync(string deckName)
+    private async Task ReplaceLoadedPlaylistOnActiveDeckAsync()
+    {
+        if (ActiveSource != SourceSpotify)
+        {
+            SpotifyOperationMessage = "Switch to Spotify playlists and load a playlist window before replacing a deck.";
+            return;
+        }
+
+        var tracks = GetLoadedPlayableSpotifyPreviewTracks();
+        if (tracks.Count == 0)
+        {
+            SpotifyOperationMessage = "Load a Spotify playlist into the playlist tracks window before replacing the selected deck.";
+            return;
+        }
+
+        var normalizedDeckName = NormalizeDeckName(ActiveDeckName);
+        var playlistName = ResolveLoadedPlaylistName();
+        ClearDeckForPlaylistReplace(normalizedDeckName);
+        var added = await QueueSpotifyTracksToDeckAsync(tracks, normalizedDeckName);
+        SpotifyOperationMessage = added > 0
+            ? $"Replaced {normalizedDeckName} with {added} songs from {playlistName}."
+            : $"Replaced {normalizedDeckName}, but no playable loaded playlist tracks were added.";
+        QueueSessionStateSave();
+    }
+
+    private string ResolveLoadedPlaylistName() =>
+        SelectedSpotifyPlaylist?.Name ?? "loaded playlist";
+
+    private void ClearDeckForPlaylistReplace(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        var queue = QueueForDeck(normalizedDeckName);
+        queue.Clear();
+        _selectedDeckQueueItemIds[normalizedDeckName] = null;
+        ActiveDeckName = normalizedDeckName;
+        RefreshActiveDeckQueue();
+        RefreshDeckDisplayProperties();
+    }
+
+    private Task RandomizeDeckQueueAsync(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        if (TryRandomizeDeckQueue(normalizedDeckName))
+        {
+            return Task.CompletedTask;
+        }
+
+        var queue = QueueForDeck(normalizedDeckName);
+        SpotifyOperationMessage = queue.Count < 2
+            ? $"Add at least two songs to {normalizedDeckName} before randomizing the deck queue."
+            : $"Add at least two non-playing songs to {normalizedDeckName} before randomizing around the current song.";
+        return Task.CompletedTask;
+    }
+
+    private async Task RandomizeSourcePlaylistBeforeLoadingToDeckAsync(string deckName)
     {
         var normalizedDeckName = NormalizeDeckName(deckName);
 
@@ -1080,9 +1220,9 @@ public sealed partial class MainPageViewModel
             {
                 await RandomizeLocalTracksToDeckAsync(tracks, normalizedDeckName);
             }
-            else if (!TryRandomizeDeckQueue(normalizedDeckName))
+            else
             {
-                SpotifyOperationMessage = "Scan local music or add at least two songs to the deck before randomizing.";
+                SpotifyOperationMessage = "Scan local music before randomizing local tracks before loading.";
             }
 
             return;
@@ -1090,11 +1230,7 @@ public sealed partial class MainPageViewModel
 
         if (ActiveSource is SourceYouTube or SourceTidal)
         {
-            if (!TryRandomizeDeckQueue(normalizedDeckName))
-            {
-                SpotifyOperationMessage = $"{ActiveSource} randomizer will be enabled when that provider connector can return playable tracks.";
-            }
-
+            SpotifyOperationMessage = $"{ActiveSource} randomize-before-loading will be enabled when that provider connector can return playable tracks.";
             return;
         }
 
@@ -1105,12 +1241,7 @@ public sealed partial class MainPageViewModel
             return;
         }
 
-        if (TryRandomizeDeckQueue(normalizedDeckName))
-        {
-            return;
-        }
-
-        SpotifyOperationMessage = "Load a Spotify playlist into the playlist tracks window, or add at least two songs to the deck before randomizing.";
+        SpotifyOperationMessage = "Load a Spotify playlist into the playlist tracks window before randomizing a playlist before loading.";
     }
 
     private async Task RandomizeSpotifyPlaylistToDeckAsync(IReadOnlyList<SpotifyTrackMetadata> tracks, string deckName)
@@ -1118,7 +1249,6 @@ public sealed partial class MainPageViewModel
         var randomizedTracks = Shuffle(tracks);
         var playableTracks = randomizedTracks
             .Where(IsPlayableSpotifyTrack)
-            .Take(24)
             .ToList();
         if (playableTracks.Count == 0)
         {
@@ -1164,9 +1294,8 @@ public sealed partial class MainPageViewModel
             SelectedLocalMusicTrack = LocalMusicTracks.FirstOrDefault();
         }
 
-        var deckTracks = randomizedTracks.Take(24).ToList();
         PrepareDeckForRandomizedLoad(deckName);
-        var added = await QueueLocalTracksToDeckAsync(deckTracks, deckName);
+        var added = await QueueLocalTracksToDeckAsync(randomizedTracks, deckName);
         SpotifyOperationMessage = $"Randomized {added} local track(s) onto {NormalizeDeckName(deckName)}.";
         CacheDeckAlbumArtForQueue(deckName);
         QueueSessionStateSave();
@@ -1181,33 +1310,24 @@ public sealed partial class MainPageViewModel
             return false;
         }
 
-        var playingItem = ResolveLoadedDeckItem(normalizedDeckName);
-        var shuffledItems = Shuffle(queue.Where(item => playingItem is null || item.Id != playingItem.Id));
-        if (shuffledItems.Count < 2)
+        var protectedItemId = ResolveLoadedDeckItem(normalizedDeckName)?.Id;
+        var selectedId = _selectedDeckQueueItemIds.GetValueOrDefault(normalizedDeckName);
+        if (!DancePilotQueueOperations.RandomizeDeckQueue(queue, normalizedDeckName, protectedItemId))
         {
             return false;
         }
 
-        var selectedId = _selectedDeckQueueItemIds.GetValueOrDefault(normalizedDeckName);
-        queue.Clear();
-        if (playingItem is not null)
-        {
-            queue.Add(playingItem);
-        }
-
-        queue.AddRange(shuffledItems);
-        RenumberQueue(queue, normalizedDeckName);
         _selectedDeckQueueItemIds[normalizedDeckName] =
             selectedId is not null && queue.Any(item => item.Id == selectedId.Value)
                 ? selectedId
-                : queue.FirstOrDefault(item => playingItem is null || item.Id != playingItem.Id)?.Id
+                : queue.FirstOrDefault(item => protectedItemId is null || item.Id != protectedItemId.Value)?.Id
                     ?? queue.FirstOrDefault()?.Id;
 
         ActiveDeckName = normalizedDeckName;
         RefreshActiveDeckQueue();
         RefreshDeckDisplayProperties();
         CacheDeckAlbumArtForQueue(normalizedDeckName);
-        SpotifyOperationMessage = $"Randomized {shuffledItems.Count} queued track(s) on {normalizedDeckName}.";
+        SpotifyOperationMessage = $"Randomized {normalizedDeckName} queue: {queue.Count} songs.";
         QueueSessionStateSave();
         return true;
     }

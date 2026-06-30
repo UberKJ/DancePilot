@@ -42,43 +42,10 @@ public sealed partial class MainPageViewModel
             return;
         }
 
-        if (_playingDeckQueueItemId is not null)
+        var deckItem = FindDeckItemForUserPlay(ActiveDeckName);
+        if (deckItem is not null)
         {
-            var loadedItem = ResolvePlayingDeckItem(_playingDeckName);
-            if (loadedItem?.Source == SongSources.Local)
-            {
-                if (IsLocalPlaybackLoadedForQueueItem(_playingDeckName, loadedItem))
-                {
-                    SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.LocalFilesFuture);
-                    ResumeLocalMusic();
-                }
-                else
-                {
-                    await PlayDeckQueueItemAsync(loadedItem, _playingDeckName);
-                }
-            }
-            else if (loadedItem?.Source == SongSources.Spotify)
-            {
-                SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.SpotifyConnect);
-                await ResumeSpotifyAsync();
-            }
-            else if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
-            {
-                ResumeLocalMusic();
-            }
-            else
-            {
-                await ResumeSpotifyAsync();
-            }
-
-            return;
-        }
-
-        var nextDeckItem = SelectedActiveDeckQueueItem
-            ?? GetNextDeckQueueItem(ActiveDeckName, includeFirstIfNoLastPlayed: true);
-        if (nextDeckItem is not null)
-        {
-            await PlayDeckQueueItemAsync(nextDeckItem);
+            await PlayOrResumeDeckItemAsync(deckItem, ActiveDeckName);
             return;
         }
 
@@ -109,24 +76,44 @@ public sealed partial class MainPageViewModel
             return;
         }
 
-        if (!IsPlaybackPlaying
-            && _playingDeckQueueItemId is not null
+        ActiveDeckName = normalizedDeckName;
+        RefreshActiveDeckQueue();
+        var item = FindDeckItemForUserPlay(normalizedDeckName);
+        if (item is null)
+        {
+            SpotifyOperationMessage = $"{normalizedDeckName} has no queued song to play.";
+            return;
+        }
+
+        await PlayOrResumeDeckItemAsync(item, normalizedDeckName);
+    }
+
+    private async Task PlayOrResumeDeckItemAsync(DancePilotQueueItem item, string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        _selectedDeckQueueItemIds[normalizedDeckName] = item.Id;
+        if (string.Equals(ActiveDeckName, normalizedDeckName, StringComparison.Ordinal))
+        {
+            SelectedActiveDeckQueueItem = ActiveDeckQueue.FirstOrDefault(queueItem => queueItem.Id == item.Id)
+                ?? item;
+        }
+
+        if (_playingDeckQueueItemId == item.Id
             && string.Equals(_playingDeckName, normalizedDeckName, StringComparison.Ordinal))
         {
-            var loadedItem = ResolvePlayingDeckItem(normalizedDeckName);
-            if (loadedItem?.Source == SongSources.Local)
+            if (item.Source == SongSources.Local)
             {
-                if (IsLocalPlaybackLoadedForQueueItem(normalizedDeckName, loadedItem))
+                if (IsLocalPlaybackLoadedForQueueItem(normalizedDeckName, item))
                 {
                     SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.LocalFilesFuture);
                     ResumeLocalMusic();
                 }
                 else
                 {
-                    await PlayDeckQueueItemAsync(loadedItem, normalizedDeckName);
+                    await PlayDeckQueueItemAsync(item, normalizedDeckName);
                 }
             }
-            else if (loadedItem?.Source == SongSources.Spotify)
+            else if (item.Source == SongSources.Spotify)
             {
                 SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.SpotifyConnect);
                 await ResumeSpotifyAsync();
@@ -143,20 +130,6 @@ public sealed partial class MainPageViewModel
             return;
         }
 
-        ActiveDeckName = normalizedDeckName;
-        RefreshActiveDeckQueue();
-        var item = FindSelectedDeckQueueItem(normalizedDeckName)
-            ?? GetNextDeckQueueItem(normalizedDeckName, includeFirstIfNoLastPlayed: true)
-            ?? QueueForDeck(normalizedDeckName).FirstOrDefault();
-        if (item is null)
-        {
-            SpotifyOperationMessage = $"{normalizedDeckName} has no queued song to play.";
-            return;
-        }
-
-        _selectedDeckQueueItemIds[normalizedDeckName] = item.Id;
-        SelectedActiveDeckQueueItem = ActiveDeckQueue.FirstOrDefault(queueItem => queueItem.Id == item.Id)
-            ?? item;
         await PlayDeckQueueItemAsync(item, normalizedDeckName);
     }
 

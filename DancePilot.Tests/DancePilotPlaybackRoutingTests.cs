@@ -66,6 +66,25 @@ public sealed class DancePilotPlaybackRoutingTests
     }
 
     [Fact]
+    public void LocalQueueItem_UsesExternalUriAsFallbackLocalPath()
+    {
+        var item = new DancePilotQueueItem
+        {
+            Id = 5,
+            DeckName = "Deck A",
+            Source = SongSources.Local,
+            ExternalUri = @"C:\Music\Line Dance\Restored Local.mp3",
+            Title = "Restored Local",
+            Artist = "DancePilot"
+        };
+
+        var route = DancePilotPlaybackRouter.Resolve(item);
+
+        Assert.Equal(DancePilotPlaybackRouteKind.LocalMediaPlayer, route.Kind);
+        Assert.Equal(@"C:\Music\Line Dance\Restored Local.mp3", route.LocalPath);
+    }
+
+    [Fact]
     public void DeckState_ReportsQueueCountAndSelectedPausedStatus()
     {
         var currentTrack = new DancePilotQueueItem

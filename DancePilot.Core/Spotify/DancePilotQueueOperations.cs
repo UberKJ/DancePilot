@@ -2,6 +2,76 @@ namespace DancePilot.Core.Spotify;
 
 public static class DancePilotQueueOperations
 {
+    public static bool RandomizeDeckQueue(
+        IList<DancePilotQueueItem> queue,
+        string deckName,
+        int? protectedItemId = null,
+        Random? random = null)
+    {
+        if (queue.Count < 2)
+        {
+            return false;
+        }
+
+        var protectedIndex = protectedItemId is int itemId
+            ? FindQueueIndex(queue, itemId)
+            : -1;
+        var protectedItem = protectedIndex >= 0 ? queue[protectedIndex] : null;
+        var movableItems = queue
+            .Where((_, index) => index != protectedIndex)
+            .ToList();
+        if (movableItems.Count < 2)
+        {
+            return false;
+        }
+
+        var shuffledItems = Shuffle(movableItems, random ?? Random.Shared);
+        queue.Clear();
+        var shuffledIndex = 0;
+        for (var index = 0; index < movableItems.Count + (protectedItem is null ? 0 : 1); index++)
+        {
+            if (index == protectedIndex && protectedItem is not null)
+            {
+                queue.Add(protectedItem);
+                continue;
+            }
+
+            queue.Add(shuffledItems[shuffledIndex++]);
+        }
+
+        Renumber(queue, deckName);
+        return true;
+    }
+
+    public static int AppendItems(
+        IList<DancePilotQueueItem> queue,
+        IEnumerable<DancePilotQueueItem> items,
+        string deckName)
+    {
+        var added = 0;
+        foreach (var item in items)
+        {
+            queue.Add(item with { DeckName = deckName });
+            added++;
+        }
+
+        if (added > 0)
+        {
+            Renumber(queue, deckName);
+        }
+
+        return added;
+    }
+
+    public static int ReplaceItems(
+        IList<DancePilotQueueItem> queue,
+        IEnumerable<DancePilotQueueItem> items,
+        string deckName)
+    {
+        queue.Clear();
+        return AppendItems(queue, items, deckName);
+    }
+
     public static bool MoveItemUp(IList<DancePilotQueueItem> queue, int itemId, string deckName)
     {
         var index = FindQueueIndex(queue, itemId);
@@ -92,4 +162,24 @@ public static class DancePilotQueueOperations
     private static bool IsPending(DancePilotQueueItem item) =>
         string.IsNullOrWhiteSpace(item.Status)
         || string.Equals(item.Status, "pending", StringComparison.OrdinalIgnoreCase);
+
+    private static List<DancePilotQueueItem> Shuffle(IReadOnlyList<DancePilotQueueItem> items, Random random)
+    {
+        var shuffled = items.ToList();
+        var original = shuffled.ToList();
+        for (var index = shuffled.Count - 1; index > 0; index--)
+        {
+            var swapIndex = random.Next(index + 1);
+            (shuffled[index], shuffled[swapIndex]) = (shuffled[swapIndex], shuffled[index]);
+        }
+
+        if (shuffled.SequenceEqual(original))
+        {
+            var first = shuffled[0];
+            shuffled.RemoveAt(0);
+            shuffled.Add(first);
+        }
+
+        return shuffled;
+    }
 }

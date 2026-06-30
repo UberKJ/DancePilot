@@ -68,6 +68,7 @@ public sealed class PlaybackDatabaseTests
 
             Assert.True(await TableExistsAsync(connection, "app_settings"));
             Assert.True(await TableExistsAsync(connection, "album_art_cache"));
+            Assert.True(await TableExistsAsync(connection, "local_tracks"));
             Assert.True(await TableExistsAsync(connection, "local_playlists"));
             Assert.True(await TableExistsAsync(connection, "local_playlist_tracks"));
             Assert.True(await TableExistsAsync(connection, "playback_history"));

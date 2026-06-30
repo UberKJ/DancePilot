@@ -30,6 +30,10 @@ internal sealed class AppServices
 
     public required SpotifyLibraryRepository SpotifyLibraryRepository { get; init; }
 
+    public required LocalMusicRepository LocalMusicRepository { get; init; }
+
+    public required LocalLibrarySettingsRepository LocalLibrarySettingsRepository { get; init; }
+
     public required LocalPlaylistRepository LocalPlaylistRepository { get; init; }
 
     public required LocalMusicLibraryService LocalMusicLibraryService { get; init; }

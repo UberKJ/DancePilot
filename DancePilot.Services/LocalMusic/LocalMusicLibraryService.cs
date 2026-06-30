@@ -25,6 +25,8 @@ public sealed class LocalMusicLibraryService
         ".opus"
     };
 
+    public static string DefaultAlbumArtCacheFolderPath => AlbumArtCacheFolder();
+
     public Task<IReadOnlyList<LocalMusicTrack>> LoadDefaultMusicLibraryAsync(
         CancellationToken cancellationToken = default)
     {
@@ -194,6 +196,7 @@ public sealed class LocalMusicLibraryService
             Duration = metadata.Duration,
             Extension = fileInfo.Extension.TrimStart('.').ToUpperInvariant(),
             Folder = fileInfo.Directory?.FullName ?? fallbackFolder,
+            FileSize = fileInfo.Length,
             LastModifiedAt = new DateTimeOffset(fileInfo.LastWriteTimeUtc)
         };
     }

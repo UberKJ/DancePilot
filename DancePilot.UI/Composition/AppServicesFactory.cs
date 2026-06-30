@@ -49,6 +49,8 @@ internal static class AppServicesFactory
             PlaybackSettingsRepository = new PlaybackSettingsRepository(connectionFactory),
             SessionStateRepository = new SessionStateRepository(connectionFactory),
             SpotifyLibraryRepository = new SpotifyLibraryRepository(connectionFactory),
+            LocalMusicRepository = new LocalMusicRepository(connectionFactory),
+            LocalLibrarySettingsRepository = new LocalLibrarySettingsRepository(connectionFactory),
             LocalPlaylistRepository = new LocalPlaylistRepository(connectionFactory),
             LocalMusicLibraryService = new LocalMusicLibraryService(),
             LocalAudioAnalysisService = new LocalAudioAnalysisService(),
