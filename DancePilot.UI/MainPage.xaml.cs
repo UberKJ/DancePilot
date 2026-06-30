@@ -150,13 +150,16 @@ public sealed partial class MainPage : Page
             .Concat(GetSelectedItems<SpotifyTrackMetadata>(SpotifySearchResultsList))
             .ToList();
         var localTracks = GetSelectedItems<LocalMusicTrack>(LocalMusicList);
+        var tracks = localTracks
+            .Select(TrackDisplayItem.FromLocal)
+            .Concat(spotifyTracks.Select(TrackDisplayItem.FromSpotify))
+            .ToList();
         var playlists = GetSelectedItems<SpotifyPlaylistSummary>(SpotifyPlaylistsList);
         var localPlaylists = GetSelectedItems<LocalMusicPlaylist>(LocalPlaylistsList);
 
         await ViewModel.QueueSourceSelectionToDeckAsync(
             deckName,
-            spotifyTracks,
-            localTracks,
+            tracks,
             playlists,
             localPlaylists: localPlaylists);
     }
@@ -312,10 +315,17 @@ public sealed partial class MainPage : Page
         }
         else
         {
+            var tracks = draggedItems
+                .OfType<LocalMusicTrack>()
+                .Select(TrackDisplayItem.FromLocal)
+                .Concat(draggedItems
+                    .OfType<SpotifyTrackMetadata>()
+                    .Select(TrackDisplayItem.FromSpotify))
+                .ToList();
+
             await ViewModel.QueueSourceSelectionToDeckAsync(
                 deckName,
-                draggedItems.OfType<SpotifyTrackMetadata>(),
-                draggedItems.OfType<LocalMusicTrack>(),
+                tracks,
                 draggedItems.OfType<SpotifyPlaylistSummary>(),
                 targetItem?.Id,
                 insertAtTop: targetItem is null,
@@ -361,6 +371,7 @@ public sealed partial class MainPage : Page
         item switch
         {
             DancePilotQueueItem queueItem => $"queue:{queueItem.Id}:{queueItem.DeckName}",
+            TrackDisplayItem track => $"track:{track.Source}:{track.LocalPath ?? track.ExternalUri ?? track.ProviderTrackId}",
             SpotifyTrackMetadata track when !string.IsNullOrWhiteSpace(track.SpotifyUri) => $"spotify-track:{track.SpotifyUri}",
             SpotifyTrackMetadata track when !string.IsNullOrWhiteSpace(track.SpotifyTrackId) => $"spotify-track-id:{track.SpotifyTrackId}",
             SpotifyPlaylistSummary playlist when !string.IsNullOrWhiteSpace(playlist.SpotifyPlaylistId) => $"spotify-playlist:{playlist.SpotifyPlaylistId}",
@@ -415,11 +426,23 @@ public sealed partial class MainPage : Page
         playNowItem.Click += async (_, _) => await ViewModel.PlayQueueItemAsync(item);
         flyout.Items.Add(playNowItem);
 
+        var moveUpItem = new MenuFlyoutItem { Text = "Move up" };
+        moveUpItem.Click += (_, _) => ViewModel.MoveQueueItemUp(item);
+        flyout.Items.Add(moveUpItem);
+
+        var moveDownItem = new MenuFlyoutItem { Text = "Move down" };
+        moveDownItem.Click += (_, _) => ViewModel.MoveQueueItemDown(item);
+        flyout.Items.Add(moveDownItem);
+
         var removeItem = new MenuFlyoutItem { Text = "Remove song from queue" };
         removeItem.Click += (_, _) => ViewModel.RemoveQueueItem(item);
         flyout.Items.Add(removeItem);
 
         flyout.Items.Add(new MenuFlyoutSeparator());
+
+        var clearPendingItem = new MenuFlyoutItem { Text = $"Clear pending {deckName} queue" };
+        clearPendingItem.Click += (_, _) => ViewModel.ClearPendingQueue(deckName);
+        flyout.Items.Add(clearPendingItem);
 
         var clearItem = new MenuFlyoutItem { Text = $"Clear {deckName} queue" };
         clearItem.Click += (_, _) => ViewModel.ClearDeckQueue(deckName);
@@ -431,6 +454,10 @@ public sealed partial class MainPage : Page
     private void ShowQueueClearFlyout(ListView list, string deckName, DependencyObject? source)
     {
         var flyout = new MenuFlyout();
+        var clearPendingItem = new MenuFlyoutItem { Text = $"Clear pending {deckName} queue" };
+        clearPendingItem.Click += (_, _) => ViewModel.ClearPendingQueue(deckName);
+        flyout.Items.Add(clearPendingItem);
+
         var clearItem = new MenuFlyoutItem { Text = $"Clear {deckName} queue" };
         clearItem.Click += (_, _) => ViewModel.ClearDeckQueue(deckName);
         flyout.Items.Add(clearItem);

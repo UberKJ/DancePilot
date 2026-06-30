@@ -1048,6 +1048,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
 
@@ -1088,10 +1089,23 @@
                                 MinHeight="34" />
                         </Grid>
 
-                        <TextBlock Grid.Row="2" Text="MATCHING SONGS" Foreground="{StaticResource GreenBrush}" FontSize="12" FontWeight="Bold" Visibility="{x:Bind ViewModel.RecommendationsVisibility, Mode=OneWay}" />
+                        <Grid Grid.Row="2" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="1.45*" />
+                            </Grid.ColumnDefinitions>
+                            <Button Command="{x:Bind ViewModel.MoveSelectedQueueItemUpCommand}" Content="UP" Style="{StaticResource ChromeButtonStyle}" MinHeight="32" />
+                            <Button Grid.Column="1" Command="{x:Bind ViewModel.MoveSelectedQueueItemDownCommand}" Content="DOWN" Style="{StaticResource ChromeButtonStyle}" MinHeight="32" />
+                            <Button Grid.Column="2" Command="{x:Bind ViewModel.RemoveSelectedQueueItemCommand}" Content="REMOVE" Style="{StaticResource DangerButtonStyle}" MinHeight="32" />
+                            <Button Grid.Column="3" Command="{x:Bind ViewModel.ClearPendingQueueCommand}" Content="CLEAR PENDING" Style="{StaticResource DangerButtonStyle}" MinHeight="32" />
+                        </Grid>
+
+                        <TextBlock Grid.Row="3" Text="MATCHING SONGS" Foreground="{StaticResource GreenBrush}" FontSize="12" FontWeight="Bold" Visibility="{x:Bind ViewModel.RecommendationsVisibility, Mode=OneWay}" />
 
                         <ListView
-                            Grid.Row="3"
+                            Grid.Row="4"
                             ItemsSource="{x:Bind ViewModel.Recommendations}"
                             MaxHeight="104"
                             Visibility="{x:Bind ViewModel.RecommendationsVisibility, Mode=OneWay}"
@@ -1122,7 +1136,7 @@
 
                         <ListView
                             x:Name="SongQueueList"
-                            Grid.Row="4"
+                            Grid.Row="5"
                             ItemsSource="{x:Bind ViewModel.QueueViewDeckQueue, Mode=OneWay}"
                             SelectedItem="{x:Bind ViewModel.SelectedQueueViewDeckQueueItem, Mode=TwoWay}"
                             SelectionMode="Extended"
