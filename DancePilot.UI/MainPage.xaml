@@ -158,7 +158,7 @@
                 <Border
                     x:Name="DeckADropTarget"
                     Background="{StaticResource PanelBrush}"
-                    BorderBrush="{StaticResource YellowBrush}"
+                    BorderBrush="{x:Bind ViewModel.DeckABorderBrush, Mode=OneWay}"
                     BorderThickness="1"
                     CornerRadius="6"
                     Padding="16"
@@ -173,9 +173,25 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
-                        <Grid>
-                            <TextBlock Text="{x:Bind ViewModel.CurrentDeckHeader, Mode=OneWay}" Foreground="{StaticResource YellowBrush}" Style="{StaticResource PanelTitleStyle}" />
-                            <TextBlock Text="{x:Bind ViewModel.DeckAStatus, Mode=OneWay}" Foreground="{StaticResource GreenBrush}" FontSize="13" FontWeight="Bold" HorizontalAlignment="Right" />
+                        <Grid RowSpacing="4">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{x:Bind ViewModel.CurrentDeckHeader, Mode=OneWay}" Foreground="{StaticResource YellowBrush}" Style="{StaticResource PanelTitleStyle}" />
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                                    <TextBlock Text="{x:Bind ViewModel.DeckAState.PlayingBadgeText, Mode=OneWay}" Foreground="{x:Bind ViewModel.DeckAPlayingBadgeBrush, Mode=OneWay}" FontSize="11" FontWeight="SemiBold" />
+                                    <TextBlock Text="{x:Bind ViewModel.DeckAState.PausedBadgeText, Mode=OneWay}" Foreground="{x:Bind ViewModel.DeckAPausedBadgeBrush, Mode=OneWay}" FontSize="11" FontWeight="SemiBold" />
+                                    <TextBlock Text="{x:Bind ViewModel.DeckAState.SelectedBadgeText, Mode=OneWay}" Foreground="{x:Bind ViewModel.DeckASelectedBadgeBrush, Mode=OneWay}" FontSize="11" FontWeight="SemiBold" />
+                                    <TextBlock Text="{x:Bind ViewModel.DeckAState.QueueCountText, Mode=OneWay}" Foreground="{x:Bind ViewModel.DeckAQueueBadgeBrush, Mode=OneWay}" FontSize="11" FontWeight="SemiBold" />
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Grid.Row="1" Text="{x:Bind ViewModel.DeckAStatus, Mode=OneWay}" Foreground="{x:Bind ViewModel.DeckAStatusBrush, Mode=OneWay}" FontSize="13" FontWeight="Bold" HorizontalAlignment="Right" />
                         </Grid>
 
                         <Grid Grid.Row="1" ColumnSpacing="16">
@@ -192,7 +208,7 @@
                                     <RowDefinition Height="72" />
                                 </Grid.RowDefinitions>
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="{x:Bind ViewModel.DeckATitle, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="20" FontWeight="Bold" TextWrapping="WrapWholeWords" MaxLines="1" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{x:Bind ViewModel.DeckATitle, Mode=OneWay}" Foreground="{x:Bind ViewModel.DeckATitleBrush, Mode=OneWay}" FontSize="20" FontWeight="Bold" TextWrapping="WrapWholeWords" MaxLines="1" TextTrimming="CharacterEllipsis" />
                                     <TextBlock Text="{x:Bind ViewModel.DeckAArtist, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="15" TextTrimming="CharacterEllipsis" />
                                     <TextBlock Text="{x:Bind ViewModel.DeckADetail, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
@@ -307,7 +323,7 @@
                     x:Name="DeckBDropTarget"
                     Grid.Column="1"
                     Background="{StaticResource PanelBrush}"
-                    BorderBrush="{StaticResource BlueBrush}"
+                    BorderBrush="{x:Bind ViewModel.DeckBBorderBrush, Mode=OneWay}"
                     BorderThickness="1"
                     CornerRadius="6"
                     Padding="16"
@@ -322,9 +338,25 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
-                        <Grid>
-                            <TextBlock Text="{x:Bind ViewModel.NextDeckHeader, Mode=OneWay}" Foreground="{StaticResource BlueBrush}" Style="{StaticResource PanelTitleStyle}" />
-                            <TextBlock Text="{x:Bind ViewModel.DeckBStatus, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" />
+                        <Grid RowSpacing="4">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{x:Bind ViewModel.NextDeckHeader, Mode=OneWay}" Foreground="{StaticResource BlueBrush}" Style="{StaticResource PanelTitleStyle}" />
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                                    <TextBlock Text="{x:Bind ViewModel.DeckBState.PlayingBadgeText, Mode=OneWay}" Foreground="{x:Bind ViewModel.DeckBPlayingBadgeBrush, Mode=OneWay}" FontSize="11" FontWeight="SemiBold" />
+                                    <TextBlock Text="{x:Bind ViewModel.DeckBState.PausedBadgeText, Mode=OneWay}" Foreground="{x:Bind ViewModel.DeckBPausedBadgeBrush, Mode=OneWay}" FontSize="11" FontWeight="SemiBold" />
+                                    <TextBlock Text="{x:Bind ViewModel.DeckBState.SelectedBadgeText, Mode=OneWay}" Foreground="{x:Bind ViewModel.DeckBSelectedBadgeBrush, Mode=OneWay}" FontSize="11" FontWeight="SemiBold" />
+                                    <TextBlock Text="{x:Bind ViewModel.DeckBState.QueueCountText, Mode=OneWay}" Foreground="{x:Bind ViewModel.DeckBQueueBadgeBrush, Mode=OneWay}" FontSize="11" FontWeight="SemiBold" />
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Grid.Row="1" Text="{x:Bind ViewModel.DeckBStatus, Mode=OneWay}" Foreground="{x:Bind ViewModel.DeckBStatusBrush, Mode=OneWay}" FontSize="13" FontWeight="Bold" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" />
                         </Grid>
 
                         <Grid Grid.Row="1" ColumnSpacing="16">
@@ -341,7 +373,7 @@
                                     <RowDefinition Height="72" />
                                 </Grid.RowDefinitions>
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="{x:Bind ViewModel.DeckBTitle, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="20" FontWeight="Bold" TextWrapping="WrapWholeWords" MaxLines="1" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{x:Bind ViewModel.DeckBTitle, Mode=OneWay}" Foreground="{x:Bind ViewModel.DeckBTitleBrush, Mode=OneWay}" FontSize="20" FontWeight="Bold" TextWrapping="WrapWholeWords" MaxLines="1" TextTrimming="CharacterEllipsis" />
                                     <TextBlock Text="{x:Bind ViewModel.DeckBArtist, Mode=OneWay}" Foreground="{StaticResource PrimaryTextBrush}" FontSize="15" TextTrimming="CharacterEllipsis" />
                                     <TextBlock Text="{x:Bind ViewModel.DeckBDetail, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>

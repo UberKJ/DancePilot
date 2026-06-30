@@ -115,14 +115,23 @@ public sealed class DancePilotDatabaseMigrator
                 id INTEGER PRIMARY KEY,
                 source TEXT,
                 external_uri TEXT,
+                local_path TEXT,
                 song_id INTEGER,
                 title TEXT,
                 artist TEXT,
+                album TEXT,
+                album_art_url TEXT,
+                duration_ms INTEGER,
                 queue_position INTEGER,
                 status TEXT,
                 created_at TEXT
             );
             """, cancellationToken);
+
+        await AddColumnIfMissingAsync(connection, "queue", "local_path", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "queue", "album", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "queue", "album_art_url", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "queue", "duration_ms", "INTEGER", cancellationToken);
 
         await ExecuteAsync(connection, """
             CREATE INDEX IF NOT EXISTS ix_queue_status_position

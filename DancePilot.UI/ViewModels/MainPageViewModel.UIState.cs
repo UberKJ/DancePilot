@@ -435,9 +435,13 @@ public sealed partial class MainPageViewModel
 
     public string NextDeckHeader => "DECK B";
 
-    public string DeckAStatus => ResolveDeckStatus("Deck A");
+    public DancePilotDeckState DeckAState => CreateDeckState("Deck A");
 
-    public string DeckBStatus => ResolveDeckStatus("Deck B");
+    public DancePilotDeckState DeckBState => CreateDeckState("Deck B");
+
+    public string DeckAStatus => DeckAState.StatusText;
+
+    public string DeckBStatus => DeckBState.StatusText;
 
     public string DeckATitle => ResolveDeckTitle("Deck A");
 
@@ -451,6 +455,34 @@ public sealed partial class MainPageViewModel
 
     public string DeckBDetail => ResolveDeckDetail("Deck B");
 
+    public Brush DeckABorderBrush => DeckPanelBorderBrush("Deck A");
+
+    public Brush DeckBBorderBrush => DeckPanelBorderBrush("Deck B");
+
+    public Brush DeckATitleBrush => DeckTitleBrush("Deck A");
+
+    public Brush DeckBTitleBrush => DeckTitleBrush("Deck B");
+
+    public Brush DeckAStatusBrush => DeckStatusBrush("Deck A");
+
+    public Brush DeckBStatusBrush => DeckStatusBrush("Deck B");
+
+    public Brush DeckAPlayingBadgeBrush => DeckBadgeBrush("Deck A", static state => state.IsPlaying);
+
+    public Brush DeckBPlayingBadgeBrush => DeckBadgeBrush("Deck B", static state => state.IsPlaying);
+
+    public Brush DeckAPausedBadgeBrush => DeckBadgeBrush("Deck A", static state => state.IsPaused);
+
+    public Brush DeckBPausedBadgeBrush => DeckBadgeBrush("Deck B", static state => state.IsPaused);
+
+    public Brush DeckASelectedBadgeBrush => DeckBadgeBrush("Deck A", static state => state.IsSelected);
+
+    public Brush DeckBSelectedBadgeBrush => DeckBadgeBrush("Deck B", static state => state.IsSelected);
+
+    public Brush DeckAQueueBadgeBrush => DeckQueueBadgeBrush("Deck A");
+
+    public Brush DeckBQueueBadgeBrush => DeckQueueBadgeBrush("Deck B");
+
     public bool IsPlaybackPlaying
     {
         get => _isPlaybackPlaying;
@@ -461,6 +493,7 @@ public sealed partial class MainPageViewModel
                 OnPropertyChanged(nameof(PlayPauseLabel));
                 OnPropertyChanged(nameof(DeckAPlayPauseLabel));
                 OnPropertyChanged(nameof(DeckBPlayPauseLabel));
+                NotifyDeckStateProperties();
             }
         }
     }
@@ -1221,9 +1254,10 @@ public sealed partial class MainPageViewModel
 
     private void EnsureTrackWaveformAnalysis(DancePilotQueueItem displayItem, string cacheKey)
     {
+        var localPath = displayItem.ResolvedLocalPath;
         if (displayItem.Source != SongSources.Local
-            || string.IsNullOrWhiteSpace(displayItem.ExternalUri)
-            || !File.Exists(displayItem.ExternalUri)
+            || string.IsNullOrWhiteSpace(localPath)
+            || !File.Exists(localPath)
             || _realTrackWaveformKeys.Contains(cacheKey)
             || !_trackWaveformAnalysisInFlight.Add(cacheKey))
         {
@@ -1235,7 +1269,7 @@ public sealed partial class MainPageViewModel
             try
             {
                 var slices = await _localAudioAnalysisService.GetOrCreateTrackWaveformAsync(
-                    displayItem.ExternalUri,
+                    localPath,
                     TrackWaveformSliceCount);
                 if (slices.Count == 0)
                 {
@@ -1305,13 +1339,13 @@ public sealed partial class MainPageViewModel
     }
 
     private static string CreateTrackWaveformCacheKey(DancePilotQueueItem item) =>
-        $"{item.Source}|{item.ExternalUri}|{item.Title}|{item.Artist}".ToLowerInvariant();
+        $"{item.Source}|{item.SourceIdentity}|{item.Title}|{item.Artist}".ToLowerInvariant();
 
     private static IReadOnlyList<TrackWaveformSlice> CreateGeneratedTrackWaveform(DancePilotQueueItem? item)
     {
         var seedText = item is null
             ? "empty"
-            : $"{item.Source}|{item.ExternalUri}|{item.Title}|{item.Artist}|{item.BPM}|{item.MusicalKey}";
+            : $"{item.Source}|{item.SourceIdentity}|{item.Title}|{item.Artist}|{item.BPM}|{item.MusicalKey}";
         var seed = CreateDeterministicSeed(seedText);
         var slices = new TrackWaveformSlice[TrackWaveformSliceCount];
         var empty = item is null;
@@ -1401,7 +1435,7 @@ public sealed partial class MainPageViewModel
         var filePath = SelectedLocalMusicTrack?.FilePath;
         if (string.IsNullOrWhiteSpace(filePath) && _playingDeckQueueItemId is not null)
         {
-            filePath = ResolvePlayingDeckItem(_playingDeckName)?.ExternalUri;
+            filePath = ResolvePlayingDeckItem(_playingDeckName)?.ResolvedLocalPath;
         }
 
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
@@ -1809,6 +1843,133 @@ public sealed partial class MainPageViewModel
 
     private bool IsQueueViewDeck(string deckName) =>
         string.Equals(QueueViewDeckName, NormalizeDeckName(deckName), StringComparison.Ordinal);
+
+    private void NotifyDeckStateProperties()
+    {
+        OnPropertyChanged(nameof(DeckAState));
+        OnPropertyChanged(nameof(DeckBState));
+        OnPropertyChanged(nameof(DeckAStatus));
+        OnPropertyChanged(nameof(DeckBStatus));
+        OnPropertyChanged(nameof(DeckABorderBrush));
+        OnPropertyChanged(nameof(DeckBBorderBrush));
+        OnPropertyChanged(nameof(DeckATitleBrush));
+        OnPropertyChanged(nameof(DeckBTitleBrush));
+        OnPropertyChanged(nameof(DeckAStatusBrush));
+        OnPropertyChanged(nameof(DeckBStatusBrush));
+        OnPropertyChanged(nameof(DeckAPlayingBadgeBrush));
+        OnPropertyChanged(nameof(DeckBPlayingBadgeBrush));
+        OnPropertyChanged(nameof(DeckAPausedBadgeBrush));
+        OnPropertyChanged(nameof(DeckBPausedBadgeBrush));
+        OnPropertyChanged(nameof(DeckASelectedBadgeBrush));
+        OnPropertyChanged(nameof(DeckBSelectedBadgeBrush));
+        OnPropertyChanged(nameof(DeckAQueueBadgeBrush));
+        OnPropertyChanged(nameof(DeckBQueueBadgeBrush));
+    }
+
+    private Brush DeckPanelBorderBrush(string deckName)
+    {
+        var state = CreateDeckState(deckName);
+        if (state.IsPlaying)
+        {
+            return Brush("#39E75F");
+        }
+
+        if (state.IsPaused)
+        {
+            return Brush("#A9C6D8");
+        }
+
+        if (state.IsSelected)
+        {
+            return Brush(DeckAccentHex(deckName));
+        }
+
+        return Brush("#27313B");
+    }
+
+    private Brush DeckTitleBrush(string deckName)
+    {
+        var state = CreateDeckState(deckName);
+        if (state.IsPlaying)
+        {
+            return Brush("#FFFFFF");
+        }
+
+        if (state.IsPaused)
+        {
+            return Brush("#DCE7EF");
+        }
+
+        if (state.IsSelected)
+        {
+            return Brush(DeckAccentSoftHex(deckName));
+        }
+
+        return Brush("#9AA6B2");
+    }
+
+    private Brush DeckStatusBrush(string deckName)
+    {
+        var state = CreateDeckState(deckName);
+        if (state.IsPlaying)
+        {
+            return Brush("#39E75F");
+        }
+
+        if (state.IsPaused)
+        {
+            return Brush("#FFD35A");
+        }
+
+        if (state.IsSelected)
+        {
+            return Brush(DeckAccentSoftHex(deckName));
+        }
+
+        return Brush("#7E8A95");
+    }
+
+    private Brush DeckBadgeBrush(string deckName, Func<DancePilotDeckState, bool> isActive)
+    {
+        var state = CreateDeckState(deckName);
+        if (!isActive(state))
+        {
+            return Brush("#56616C");
+        }
+
+        if (state.IsPlaying)
+        {
+            return Brush("#39E75F");
+        }
+
+        if (state.IsPaused)
+        {
+            return Brush("#FFD35A");
+        }
+
+        return Brush(DeckAccentSoftHex(deckName));
+    }
+
+    private Brush DeckQueueBadgeBrush(string deckName)
+    {
+        var state = CreateDeckState(deckName);
+        if (state.QueueCount == 0)
+        {
+            return Brush("#56616C");
+        }
+
+        return state.IsPlaying
+            ? Brush("#C8FFD7")
+            : state.IsSelected
+                ? Brush(DeckAccentSoftHex(deckName))
+                : Brush("#9AA6B2");
+    }
+
+    private static string DeckAccentHex(string deckName) =>
+        NormalizeDeckName(deckName) == "Deck B" ? "#1EA7FF" : "#F4B400";
+
+    private static string DeckAccentSoftHex(string deckName) =>
+        NormalizeDeckName(deckName) == "Deck B" ? "#8EE6FF" : "#FFD35A";
 
     private Brush QueueViewButtonBackground(string deckName)
     {

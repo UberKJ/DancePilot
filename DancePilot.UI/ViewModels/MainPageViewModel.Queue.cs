@@ -52,19 +52,25 @@ public sealed partial class MainPageViewModel
 
     private async Task<LocalMusicTrack?> ResolveLocalQueueTrackAsync(DancePilotQueueItem queueItem)
     {
+        var localPath = queueItem.ResolvedLocalPath;
+        if (string.IsNullOrWhiteSpace(localPath))
+        {
+            return null;
+        }
+
         var loadedTrack = _allLocalMusicTracks.FirstOrDefault(track =>
-            string.Equals(track.FilePath, queueItem.ExternalUri, StringComparison.OrdinalIgnoreCase));
+            string.Equals(track.FilePath, localPath, StringComparison.OrdinalIgnoreCase));
         if (loadedTrack is not null)
         {
             return loadedTrack;
         }
 
-        if (string.IsNullOrWhiteSpace(queueItem.ExternalUri) || !File.Exists(queueItem.ExternalUri))
+        if (!File.Exists(localPath))
         {
             return null;
         }
 
-        var tracks = await _localMusicLibraryService.LoadFromFilePathsAsync([queueItem.ExternalUri]);
+        var tracks = await _localMusicLibraryService.LoadFromFilePathsAsync([localPath]);
         var localTrack = tracks.FirstOrDefault();
         if (localTrack is null)
         {
@@ -300,10 +306,10 @@ public sealed partial class MainPageViewModel
             return false;
         }
 
-        if (!string.IsNullOrWhiteSpace(first.ExternalUri)
-            && !string.IsNullOrWhiteSpace(second.ExternalUri))
+        if (!string.IsNullOrWhiteSpace(first.SourceIdentity)
+            && !string.IsNullOrWhiteSpace(second.SourceIdentity))
         {
-            return string.Equals(first.ExternalUri, second.ExternalUri, StringComparison.OrdinalIgnoreCase);
+            return string.Equals(first.SourceIdentity, second.SourceIdentity, StringComparison.OrdinalIgnoreCase);
         }
 
         return string.Equals(first.Title, second.Title, StringComparison.OrdinalIgnoreCase)
@@ -367,21 +373,19 @@ public sealed partial class MainPageViewModel
 
     private string ResolveDeckStatus(string deckName)
     {
-        if (IsDeckLoaded(deckName))
-        {
-            var state = IsDeckAudiblyPlaying(deckName) ? "Playing" : "Paused";
-            return string.Equals(ActiveDeckName, deckName, StringComparison.Ordinal)
-                ? $"{state} / Selected"
-                : state;
-        }
+        return CreateDeckState(deckName).StatusText;
+    }
 
-        if (string.Equals(ActiveDeckName, deckName, StringComparison.Ordinal))
-        {
-            return "Selected";
-        }
-
-        var count = QueueForDeck(deckName).Count;
-        return count == 0 ? "Ready" : $"{count} queued";
+    private DancePilotDeckState CreateDeckState(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        return DancePilotDeckState.Create(
+            normalizedDeckName,
+            IsDeckAudiblyPlaying(normalizedDeckName),
+            IsDeckLoaded(normalizedDeckName),
+            string.Equals(ActiveDeckName, normalizedDeckName, StringComparison.Ordinal),
+            QueueForDeck(normalizedDeckName).Count,
+            ResolveDeckDisplayItem(normalizedDeckName));
     }
 
     private string ResolveDeckTitle(string deckName)
@@ -469,8 +473,9 @@ public sealed partial class MainPageViewModel
 
         if (item.Source == SongSources.Local)
         {
+            var localPath = item.ResolvedLocalPath;
             var localTrack = _allLocalMusicTracks.FirstOrDefault(track =>
-                string.Equals(track.FilePath, item.ExternalUri, StringComparison.OrdinalIgnoreCase));
+                string.Equals(track.FilePath, localPath, StringComparison.OrdinalIgnoreCase));
             if (HasUsableAlbumArtSource(localTrack?.AlbumArtUrl))
             {
                 return localTrack!.AlbumArtUrl;
@@ -533,6 +538,7 @@ public sealed partial class MainPageViewModel
         OnPropertyChanged(nameof(DeckBArtist));
         OnPropertyChanged(nameof(DeckADetail));
         OnPropertyChanged(nameof(DeckBDetail));
+        NotifyDeckStateProperties();
     }
 
     private void UpdateNextUpFromDecks()
@@ -571,11 +577,13 @@ public sealed partial class MainPageViewModel
             Id = NextDeckQueueId(),
             DeckName = normalizedDeckName,
             Source = SongSources.Local,
-            ExternalUri = song.ExternalUri ?? song.ExternalUrl ?? string.Empty,
+            LocalPath = song.ExternalUri ?? song.ExternalUrl,
             SongId = song.Id,
             Title = song.Title,
             Artist = song.Artist,
+            Album = song.Album,
             AlbumArtUrl = song.AlbumArtPath,
+            Duration = song.Duration,
             BPM = song.BPM,
             MusicalKey = song.Key,
             Status = "pending"
@@ -702,9 +710,12 @@ public sealed partial class MainPageViewModel
             DeckName = normalizedDeckName,
             Source = track.Source,
             ExternalUri = ResolveTrackDisplayExternalUri(track),
+            LocalPath = ResolveTrackDisplayLocalPath(track),
             Title = track.Title,
             Artist = track.Artist,
+            Album = track.Album,
             AlbumArtUrl = ResolveTrackDisplayAlbumArt(track),
+            Duration = track.Duration,
             BPM = track.BPM,
             MusicalKey = track.MusicalKey,
             Status = "pending"
@@ -722,11 +733,16 @@ public sealed partial class MainPageViewModel
     {
         if (track.Source == SongSources.Local)
         {
-            return track.LocalPath ?? track.ExternalUri ?? string.Empty;
+            return string.Empty;
         }
 
         return track.ExternalUri ?? track.ProviderTrackId ?? string.Empty;
     }
+
+    private static string? ResolveTrackDisplayLocalPath(TrackDisplayItem track) =>
+        track.Source == SongSources.Local
+            ? track.LocalPath ?? track.ExternalUri
+            : null;
 
     private static string? ResolveTrackDisplayAlbumArt(TrackDisplayItem track)
     {
@@ -1348,9 +1364,10 @@ public sealed partial class MainPageViewModel
         var source = string.IsNullOrWhiteSpace(item.Source)
             ? "unknown"
             : item.Source.Trim();
-        if (!string.IsNullOrWhiteSpace(item.ExternalUri))
+        var sourceIdentity = item.SourceIdentity;
+        if (!string.IsNullOrWhiteSpace(sourceIdentity))
         {
-            return $"{source}:{NormalizeExactSourceValue(item.ExternalUri)}";
+            return $"{source}:{NormalizeExactSourceValue(sourceIdentity)}";
         }
 
         return item.SongId is int songId
@@ -1466,8 +1483,9 @@ public sealed partial class MainPageViewModel
 
         if (item.Source == SongSources.Local)
         {
+            var localPath = item.ResolvedLocalPath;
             var localTrack = _allLocalMusicTracks.FirstOrDefault(track =>
-                string.Equals(track.FilePath, item.ExternalUri, StringComparison.OrdinalIgnoreCase));
+                string.Equals(track.FilePath, localPath, StringComparison.OrdinalIgnoreCase));
             if (HasUsableAlbumArtSource(localTrack?.AlbumArtUrl))
             {
                 return item with { AlbumArtUrl = localTrack!.AlbumArtUrl };

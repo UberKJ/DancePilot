@@ -29,6 +29,7 @@ public sealed class AlbumArtCacheService
         CancellationToken cancellationToken = default)
     {
         var cacheKey = CreateCacheKey(item);
+        var sourceIdentity = item.SourceIdentity;
         await _cacheGate.WaitAsync(cancellationToken);
         try
         {
@@ -55,7 +56,7 @@ public sealed class AlbumArtCacheService
             {
                 CacheKey = cacheKey,
                 Source = item.Source,
-                ExternalUri = item.ExternalUri,
+                ExternalUri = sourceIdentity,
                 Title = item.Title,
                 Artist = item.Artist,
                 OriginalUri = item.AlbumArtUrl,
@@ -64,7 +65,7 @@ public sealed class AlbumArtCacheService
                 LocalFilePath = filePath,
                 UpdatedAt = DateTimeOffset.UtcNow
             }, cancellationToken);
-            await _repository.UpdateSongAlbumArtAsync(item.Source, item.ExternalUri, localUri, cancellationToken);
+            await _repository.UpdateSongAlbumArtAsync(item.Source, sourceIdentity, localUri, cancellationToken);
             return localUri;
         }
         finally
@@ -92,15 +93,16 @@ public sealed class AlbumArtCacheService
 
     private static string CreateStableCacheId(DancePilotQueueItem item)
     {
+        var localPath = item.ResolvedLocalPath;
         if (item.Source == SongSources.Local
-            && !string.IsNullOrWhiteSpace(item.ExternalUri)
-            && File.Exists(item.ExternalUri))
+            && !string.IsNullOrWhiteSpace(localPath)
+            && File.Exists(localPath))
         {
-            return $"{item.ExternalUri}|{File.GetLastWriteTimeUtc(item.ExternalUri).Ticks}";
+            return $"{localPath}|{File.GetLastWriteTimeUtc(localPath).Ticks}";
         }
 
-        return !string.IsNullOrWhiteSpace(item.ExternalUri)
-            ? item.ExternalUri
+        return !string.IsNullOrWhiteSpace(item.SourceIdentity)
+            ? item.SourceIdentity
             : $"{item.Title}|{item.Artist}";
     }
 
@@ -138,9 +140,12 @@ public sealed class AlbumArtCacheService
         DancePilotQueueItem item,
         CancellationToken cancellationToken)
     {
-        if (item.Source == SongSources.Local && File.Exists(item.ExternalUri))
+        var localPath = item.ResolvedLocalPath;
+        if (item.Source == SongSources.Local
+            && !string.IsNullOrWhiteSpace(localPath)
+            && File.Exists(localPath))
         {
-            return ReadEmbeddedLocalArtwork(item.ExternalUri);
+            return ReadEmbeddedLocalArtwork(localPath);
         }
 
         if (string.IsNullOrWhiteSpace(item.AlbumArtUrl)

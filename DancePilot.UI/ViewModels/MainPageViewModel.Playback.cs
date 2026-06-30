@@ -171,8 +171,9 @@ public sealed partial class MainPageViewModel
 
         queueItem = await PrepareQueueItemAlbumArtForPlaybackAsync(targetDeckName, queueItem);
         await PrepareOutputForDeckPlaybackAsync(queueItem);
+        var route = DancePilotPlaybackRouter.Resolve(queueItem);
 
-        if (queueItem.Source == SongSources.Local)
+        if (route.Kind == DancePilotPlaybackRouteKind.LocalMediaPlayer)
         {
             var localTrack = await ResolveLocalQueueTrackAsync(queueItem);
             if (localTrack is not null)
@@ -193,23 +194,29 @@ public sealed partial class MainPageViewModel
 
                 return true;
             }
+
+            SpotifyOperationMessage = $"Local file was not found: {queueItem.Title}.";
+            return false;
         }
 
-        if (queueItem.Source == SongSources.Spotify && !string.IsNullOrWhiteSpace(queueItem.ExternalUri))
+        if (route.Kind == DancePilotPlaybackRouteKind.SpotifyConnect
+            && !string.IsNullOrWhiteSpace(route.SpotifyUri))
         {
             if (SelectedPlaybackMode != SpotifyPlaybackModes.SpotifyConnect)
             {
                 SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.SpotifyConnect);
             }
 
-            var track = FindSpotifyTrackByUri(queueItem.ExternalUri) ?? new SpotifyTrackMetadata
+            var spotifyUri = route.SpotifyUri;
+            var track = FindSpotifyTrackByUri(spotifyUri) ?? new SpotifyTrackMetadata
             {
-                SpotifyTrackId = ExtractSpotifyTrackId(queueItem.ExternalUri),
+                SpotifyTrackId = ExtractSpotifyTrackId(spotifyUri),
                 Title = queueItem.Title,
                 Artist = queueItem.Artist,
+                Album = queueItem.Album,
                 AlbumArtUrl = queueItem.AlbumArtUrl,
-                DurationMs = 0,
-                SpotifyUri = queueItem.ExternalUri
+                DurationMs = queueItem.Duration is TimeSpan duration ? Convert.ToInt32(duration.TotalMilliseconds) : 0,
+                SpotifyUri = spotifyUri
             };
 
             var started = false;
@@ -239,7 +246,7 @@ public sealed partial class MainPageViewModel
             return true;
         }
 
-        SpotifyOperationMessage = $"Queued item cannot be played yet: {queueItem.Title}.";
+        SpotifyOperationMessage = route.ValidationMessage ?? $"Queued item cannot be played yet: {queueItem.Title}.";
         return false;
     }
 
@@ -257,11 +264,13 @@ public sealed partial class MainPageViewModel
     private bool TryValidateDeckQueueItemForPlayback(DancePilotQueueItem queueItem, out string? validationMessage)
     {
         validationMessage = null;
-        if (queueItem.Source == SongSources.Local)
+        var route = DancePilotPlaybackRouter.Resolve(queueItem);
+        if (route.Kind == DancePilotPlaybackRouteKind.LocalMediaPlayer)
         {
+            var localPath = route.LocalPath ?? string.Empty;
             var localTrack = _allLocalMusicTracks.FirstOrDefault(track =>
-                string.Equals(track.FilePath, queueItem.ExternalUri, StringComparison.OrdinalIgnoreCase));
-            if (localTrack is null && !File.Exists(queueItem.ExternalUri))
+                string.Equals(track.FilePath, localPath, StringComparison.OrdinalIgnoreCase));
+            if (localTrack is null && !File.Exists(localPath))
             {
                 validationMessage = $"Local file was not found: {queueItem.Title}.";
                 return false;
@@ -276,18 +285,12 @@ public sealed partial class MainPageViewModel
             return true;
         }
 
-        if (queueItem.Source == SongSources.Spotify)
+        if (route.Kind == DancePilotPlaybackRouteKind.SpotifyConnect)
         {
-            if (string.IsNullOrWhiteSpace(queueItem.ExternalUri))
-            {
-                validationMessage = $"{queueItem.Title} does not have a playable Spotify URI.";
-                return false;
-            }
-
             return true;
         }
 
-        validationMessage = $"Queued item cannot be played yet: {queueItem.Title}.";
+        validationMessage = route.ValidationMessage ?? $"Queued item cannot be played yet: {queueItem.Title}.";
         return false;
     }
 

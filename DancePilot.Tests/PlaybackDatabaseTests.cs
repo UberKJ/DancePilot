@@ -45,9 +45,12 @@ public sealed class PlaybackDatabaseTests
                 SpotifyTrackId = "track-123",
                 Title = "Test Song",
                 Artist = "Test Artist",
+                Album = "Test Album",
+                AlbumArtUrl = "https://image.example/test-song.jpg",
                 DurationMs = 180000,
                 SpotifyUri = "spotify:track:track-123"
             });
+            var pendingQueue = await queueRepository.GetPendingAsync();
 
             var localPlaylistRepository = new LocalPlaylistRepository(connectionFactory);
             var localPlaylist = await localPlaylistRepository.CreatePlaylistAsync("Line Dance Local");
@@ -77,6 +80,15 @@ public sealed class PlaybackDatabaseTests
             Assert.Equal(66, loadedSettings.DeckAVolume);
             Assert.Equal(81, loadedSettings.DeckBVolume);
             Assert.Equal(1, await CountRowsAsync(connection, "queue"));
+            Assert.Single(pendingQueue);
+            Assert.Equal(SongSources.Spotify, pendingQueue[0].Source);
+            Assert.Equal("Test Song", pendingQueue[0].Title);
+            Assert.Equal("Test Artist", pendingQueue[0].Artist);
+            Assert.Equal("Test Album", pendingQueue[0].Album);
+            Assert.Equal("https://image.example/test-song.jpg", pendingQueue[0].AlbumArtUrl);
+            Assert.Equal("spotify:track:track-123", pendingQueue[0].ExternalUri);
+            Assert.Null(pendingQueue[0].LocalPath);
+            Assert.Equal(TimeSpan.FromMinutes(3), pendingQueue[0].Duration);
             Assert.Equal(2, addedLocalPlaylistTracks);
             Assert.Equal(2, savedLocalPlaylistTracks.Count);
             Assert.Equal(@"C:\Music\Line Dance\Copperhead Road.mp3", savedLocalPlaylistTracks[0]);

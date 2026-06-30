@@ -525,13 +525,13 @@ public sealed partial class MainPageViewModel
 
     private async Task PrepareOutputForDeckPlaybackAsync(DancePilotQueueItem queueItem)
     {
-        if (queueItem.Source == SongSources.Local)
+        if (queueItem.IsLocalSource)
         {
             await PauseSpotifyForLocalPlaybackAsync();
             return;
         }
 
-        if (queueItem.Source == SongSources.Spotify)
+        if (queueItem.IsSpotifySource)
         {
             PauseLocalForSpotifyPlayback();
         }

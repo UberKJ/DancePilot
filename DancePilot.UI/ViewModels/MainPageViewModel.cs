@@ -770,20 +770,51 @@ public sealed partial class MainPageViewModel : ObservableObject
         var seenSourceKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in items.Where(item => !string.IsNullOrWhiteSpace(item.Title)))
         {
-            var sourceKey = CreateExactQueueSourceKey(item);
+            var normalizedItem = NormalizeQueueItemForDeck(item, deckName, position);
+            var sourceKey = CreateExactQueueSourceKey(normalizedItem);
             if (sourceKey is not null && !seenSourceKeys.Add(sourceKey))
             {
                 StartupLog.Write($"Removed duplicate restored queue source from {deckName}: {item.Title}");
                 continue;
             }
 
-            yield return item with
-            {
-                DeckName = NormalizeDeckName(deckName),
-                QueuePosition = position++
-            };
+            yield return normalizedItem;
+            position++;
         }
     }
+
+    private static DancePilotQueueItem NormalizeQueueItemForDeck(
+        DancePilotQueueItem item,
+        string deckName,
+        int position)
+    {
+        var source = NormalizeQueueItemSource(item.Source);
+        var localPath = source == SongSources.Local
+            ? item.LocalPath ?? (string.IsNullOrWhiteSpace(item.ExternalUri) ? null : item.ExternalUri)
+            : item.LocalPath;
+        var externalUri = source == SongSources.Local
+            ? string.Empty
+            : item.ExternalUri;
+
+        return item with
+        {
+            DeckName = NormalizeDeckName(deckName),
+            Source = source,
+            ExternalUri = externalUri,
+            LocalPath = localPath,
+            QueuePosition = position
+        };
+    }
+
+    private static string NormalizeQueueItemSource(string source) =>
+        source?.Trim().ToLowerInvariant() switch
+        {
+            SongSources.Local => SongSources.Local,
+            SongSources.Tidal => SongSources.Tidal,
+            SongSources.YouTube => SongSources.YouTube,
+            SongSources.Manual => SongSources.Manual,
+            _ => SongSources.Spotify
+        };
 
     private int? FindQueueItemId(string deckName, int? itemId)
     {
