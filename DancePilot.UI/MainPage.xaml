@@ -176,10 +176,11 @@
 
                 <Border
                     x:Name="DeckADropTarget"
-                    Background="{StaticResource PanelBrush}"
+                    Background="{x:Bind ViewModel.DeckAPanelBackgroundBrush, Mode=OneWay}"
                     BorderBrush="{x:Bind ViewModel.DeckABorderBrush, Mode=OneWay}"
                     BorderThickness="1"
                     CornerRadius="6"
+                    Opacity="{x:Bind ViewModel.DeckAPanelOpacity, Mode=OneWay}"
                     Padding="16"
                     AllowDrop="True"
                     DragOver="DeckDropTarget_DragOver"
@@ -341,10 +342,11 @@
                 <Border
                     x:Name="DeckBDropTarget"
                     Grid.Column="1"
-                    Background="{StaticResource PanelBrush}"
+                    Background="{x:Bind ViewModel.DeckBPanelBackgroundBrush, Mode=OneWay}"
                     BorderBrush="{x:Bind ViewModel.DeckBBorderBrush, Mode=OneWay}"
                     BorderThickness="1"
                     CornerRadius="6"
+                    Opacity="{x:Bind ViewModel.DeckBPanelOpacity, Mode=OneWay}"
                     Padding="16"
                     AllowDrop="True"
                     DragOver="DeckDropTarget_DragOver"

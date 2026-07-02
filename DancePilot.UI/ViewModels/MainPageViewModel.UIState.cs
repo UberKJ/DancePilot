@@ -479,21 +479,29 @@ public sealed partial class MainPageViewModel
 
     public Brush DeckBStatusBrush => DeckStatusBrush("Deck B");
 
-    public Brush DeckAPlayingBadgeBrush => DeckBadgeBrush("Deck A", static state => state.IsPlaying);
+    public Brush DeckAPlayingBadgeBrush => DeckPlayingBadgeBrush("Deck A");
 
-    public Brush DeckBPlayingBadgeBrush => DeckBadgeBrush("Deck B", static state => state.IsPlaying);
+    public Brush DeckBPlayingBadgeBrush => DeckPlayingBadgeBrush("Deck B");
 
-    public Brush DeckAPausedBadgeBrush => DeckBadgeBrush("Deck A", static state => state.IsPaused);
+    public Brush DeckAPausedBadgeBrush => DeckPausedBadgeBrush("Deck A");
 
-    public Brush DeckBPausedBadgeBrush => DeckBadgeBrush("Deck B", static state => state.IsPaused);
+    public Brush DeckBPausedBadgeBrush => DeckPausedBadgeBrush("Deck B");
 
-    public Brush DeckASelectedBadgeBrush => DeckBadgeBrush("Deck A", static state => state.IsSelected);
+    public Brush DeckASelectedBadgeBrush => DeckSelectedBadgeBrush("Deck A");
 
-    public Brush DeckBSelectedBadgeBrush => DeckBadgeBrush("Deck B", static state => state.IsSelected);
+    public Brush DeckBSelectedBadgeBrush => DeckSelectedBadgeBrush("Deck B");
 
     public Brush DeckAQueueBadgeBrush => DeckQueueBadgeBrush("Deck A");
 
     public Brush DeckBQueueBadgeBrush => DeckQueueBadgeBrush("Deck B");
+
+    public Brush DeckAPanelBackgroundBrush => DeckPanelBackgroundBrush("Deck A");
+
+    public Brush DeckBPanelBackgroundBrush => DeckPanelBackgroundBrush("Deck B");
+
+    public double DeckAPanelOpacity => DeckPanelOpacity("Deck A");
+
+    public double DeckBPanelOpacity => DeckPanelOpacity("Deck B");
 
     public bool IsPlaybackPlaying
     {
@@ -1878,6 +1886,49 @@ public sealed partial class MainPageViewModel
         OnPropertyChanged(nameof(DeckBSelectedBadgeBrush));
         OnPropertyChanged(nameof(DeckAQueueBadgeBrush));
         OnPropertyChanged(nameof(DeckBQueueBadgeBrush));
+        OnPropertyChanged(nameof(DeckAPanelBackgroundBrush));
+        OnPropertyChanged(nameof(DeckBPanelBackgroundBrush));
+        OnPropertyChanged(nameof(DeckAPanelOpacity));
+        OnPropertyChanged(nameof(DeckBPanelOpacity));
+    }
+
+    private Brush DeckPanelBackgroundBrush(string deckName)
+    {
+        var state = CreateDeckState(deckName);
+        var baseColor = ParseColor("#0B1015");
+        var accent = ParseColor(DeckAccentHex(deckName));
+        if (state.IsPlaying)
+        {
+            return Brush(Blend(baseColor, Blend(accent, ParseColor("#39E75F"), 0.22), 0.24));
+        }
+
+        if (state.IsSelected)
+        {
+            return Brush(Blend(baseColor, accent, 0.18));
+        }
+
+        if (state.IsPaused)
+        {
+            return Brush(Blend(baseColor, ParseColor("#A9C6D8"), 0.10));
+        }
+
+        return Brush(baseColor);
+    }
+
+    private double DeckPanelOpacity(string deckName)
+    {
+        var state = CreateDeckState(deckName);
+        if (state.IsPlaying || state.IsSelected)
+        {
+            return 1.0;
+        }
+
+        if (state.IsPaused)
+        {
+            return 0.97;
+        }
+
+        return state.QueueCount > 0 ? 0.94 : 0.90;
     }
 
     private Brush DeckPanelBorderBrush(string deckName)
@@ -1888,14 +1939,14 @@ public sealed partial class MainPageViewModel
             return Brush("#39E75F");
         }
 
-        if (state.IsPaused)
-        {
-            return Brush("#A9C6D8");
-        }
-
         if (state.IsSelected)
         {
             return Brush(DeckAccentHex(deckName));
+        }
+
+        if (state.IsPaused)
+        {
+            return Brush("#A9C6D8");
         }
 
         return Brush("#27313B");
@@ -1909,14 +1960,14 @@ public sealed partial class MainPageViewModel
             return Brush("#FFFFFF");
         }
 
-        if (state.IsPaused)
-        {
-            return Brush("#DCE7EF");
-        }
-
         if (state.IsSelected)
         {
             return Brush(DeckAccentSoftHex(deckName));
+        }
+
+        if (state.IsPaused)
+        {
+            return Brush("#DCE7EF");
         }
 
         return Brush("#9AA6B2");
@@ -1930,38 +1981,35 @@ public sealed partial class MainPageViewModel
             return Brush("#39E75F");
         }
 
-        if (state.IsPaused)
-        {
-            return Brush("#FFD35A");
-        }
-
         if (state.IsSelected)
         {
             return Brush(DeckAccentSoftHex(deckName));
         }
 
-        return Brush("#7E8A95");
-    }
-
-    private Brush DeckBadgeBrush(string deckName, Func<DancePilotDeckState, bool> isActive)
-    {
-        var state = CreateDeckState(deckName);
-        if (!isActive(state))
-        {
-            return Brush("#56616C");
-        }
-
-        if (state.IsPlaying)
-        {
-            return Brush("#39E75F");
-        }
-
         if (state.IsPaused)
         {
             return Brush("#FFD35A");
         }
 
-        return Brush(DeckAccentSoftHex(deckName));
+        return Brush("#7E8A95");
+    }
+
+    private Brush DeckPlayingBadgeBrush(string deckName)
+    {
+        var state = CreateDeckState(deckName);
+        return state.IsPlaying ? Brush("#39E75F") : Brush("#56616C");
+    }
+
+    private Brush DeckPausedBadgeBrush(string deckName)
+    {
+        var state = CreateDeckState(deckName);
+        return state.IsPaused ? Brush("#FFD35A") : Brush("#56616C");
+    }
+
+    private Brush DeckSelectedBadgeBrush(string deckName)
+    {
+        var state = CreateDeckState(deckName);
+        return state.IsSelected ? Brush(DeckAccentSoftHex(deckName)) : Brush("#56616C");
     }
 
     private Brush DeckQueueBadgeBrush(string deckName)
