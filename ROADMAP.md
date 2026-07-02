@@ -2,7 +2,7 @@
 
 ## Current Milestone
 
-Stabilize deck workflow and polish the live event UI.
+Stabilize deck workflow, transitions, and operator confidence.
 
 ## Core Complete or Mostly Complete
 
@@ -15,36 +15,66 @@ Stabilize deck workflow and polish the live event UI.
 - [x] Local queued-track playback from saved LocalPath
 - [x] Deck randomize separated from source playlist randomize
 - [x] Full playlist loading no longer intentionally capped at 24 songs
+- [x] Deck UI state/highlight pass
+- [x] Safer transition behavior for one-deck and two-deck use
 - [x] Repository cleanup for generated build artifacts
 
-## Current Sprint: Deck UI State Pass
+## Current Sprint: Operator Experience Pass
 
-- [ ] Fix Deck B selected/highlight/glow state so it matches Deck A
-- [ ] Show clear active deck state
-- [ ] Show clear playing deck state
-- [ ] Show clear paused/stopped state
-- [ ] Make non-active deck visually dimmer without hiding important information
-- [ ] Add or verify queue counts on each deck
-- [ ] Add clear status text after deck actions
-- [ ] Verify selected item, playing item, and active deck are visually distinct
-- [ ] Confirm Deck A and Deck B use the same style and binding pattern
+- [ ] Verify deck fader/level controls have real behavior or are clearly labeled as future/limited
+- [ ] Improve current/next track readability from a distance
+- [ ] Improve bottom transport wording so it is source-neutral where possible
+- [ ] Confirm transition status messages are clear during live use
+- [ ] Confirm queue counts and deck state remain accurate during transitions
 
-## Known Issues
+## Next Major Milestone: Library Manager
 
-- Deck A highlights correctly when selected.
-- Deck B appears active logically but does not show the same selected highlight.
+Library Manager is the planning workspace for DancePilot.
 
-## Next Sprint: Deck Workflow Verification
+Live Event remains focused on decks, queues, transitions, and playback.
+Library Manager supports planning and preparation.
 
-- [ ] Load full playlist to Deck A
-- [ ] Load full playlist to Deck B
-- [ ] Randomize Deck A only
-- [ ] Randomize Deck B only
-- [ ] Confirm randomize does not pull from the wrong selected source playlist
-- [ ] Confirm Append Playlist and Replace Deck are clear and separate
-- [ ] Confirm currently playing item is not removed or skipped during randomize
-- [ ] Confirm normal deck play and Play Now remain separate behaviors
-- [ ] Confirm mixed source playback works end to end
+Planned sections:
+
+- Music Library
+- Playlist Builder
+- Event Templates
+- Collections
+- Library Health
+- Import Center
+- AI Playlist Assistant
+
+See `docs/LIBRARY_MANAGER.md`.
+
+## Next Sprint: Library Manager Shell
+
+- [ ] Add a Library Manager navigation entry or workspace shell
+- [ ] Show current local library data in a planning-focused view
+- [ ] Keep Live Event workflow unchanged
+- [ ] Add placeholder sections for Playlist Builder, Event Templates, Collections, Library Health, Import Center, and AI Assistant
+- [ ] Avoid adding provider integrations in this sprint
+
+## Backlog: Playlist Builder
+
+- [ ] Create DancePilot playlist
+- [ ] Rename playlist
+- [ ] Delete playlist
+- [ ] Add local songs to playlist
+- [ ] Remove songs from playlist
+- [ ] Reorder playlist songs
+- [ ] Save playlist
+- [ ] Load playlist to Deck A
+- [ ] Load playlist to Deck B
+- [ ] Show estimated duration
+- [ ] Show song count
+
+## Backlog: Event Templates
+
+- [ ] Create event template
+- [ ] Add event sections
+- [ ] Attach playlists or collections to sections
+- [ ] Save reusable templates
+- [ ] Load event template into decks/queue
 
 ## Backlog: Local Library Improvements
 
@@ -56,22 +86,18 @@ Stabilize deck workflow and polish the live event UI.
 - [ ] Add optional folder exclusions
 - [ ] Improve album-art fallback display
 
-## Backlog: Event Workflow Features
-
-- [ ] Save event/session queue sets
-- [ ] Restore last event session
-- [ ] Add event notes or venue profile
-- [ ] Add request list
-- [ ] Add simple history of played songs
-- [ ] Add quick filters for slow, fast, country, rock, line dance, etc.
-
 ## Future Expansion
 
 Only after core deck workflow and local library behavior are stable.
 
-- [ ] Additional provider investigation
-- [ ] Provider interface cleanup if needed
+- [ ] Provider capability model
+- [ ] Plex investigation
+- [ ] Jellyfin investigation
+- [ ] Tidal investigation
+- [ ] Other provider investigation
 - [ ] Smarter event recommendations
+
+See `docs/PROVIDER_MODEL.md`.
 
 ## Repository and Maintenance
 
@@ -80,6 +106,13 @@ Only after core deck workflow and local library behavior are stable.
 - [ ] Consider GitHub Releases for packaged builds
 - [ ] Consider a basic CI build/test workflow
 - [ ] Keep future commits focused by sprint type
+
+## Project Documents
+
+- `docs/OPERATOR_WORKFLOW.md`
+- `docs/LIBRARY_MANAGER.md`
+- `docs/PROVIDER_MODEL.md`
+- `docs/UI_GUIDELINES.md`
 
 ## Development Rules
 
@@ -90,6 +123,7 @@ Only after core deck workflow and local library behavior are stable.
 5. Keep Codex prompts narrow.
 6. Build and test after each focused change.
 7. Manual event workflow testing matters as much as automated tests.
+8. Do not move resources and change bindings in the same UI task.
 
 ## Manual Test Note Format
 
