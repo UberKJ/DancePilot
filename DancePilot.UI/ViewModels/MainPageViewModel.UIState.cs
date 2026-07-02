@@ -385,11 +385,8 @@ public sealed partial class MainPageViewModel
         {
             if (SetProperty(ref _activeDeckName, value))
             {
-                _defaultSpotifyVolume = ResolveDeckVolume(_activeDeckName);
                 OnPropertyChanged(nameof(CurrentDeckHeader));
                 OnPropertyChanged(nameof(NextDeckHeader));
-                OnPropertyChanged(nameof(DefaultSpotifyVolume));
-                OnPropertyChanged(nameof(DefaultSpotifyVolumeDisplay));
                 RefreshDeckDisplayProperties();
                 QueueSessionStateSave();
             }
@@ -589,7 +586,20 @@ public sealed partial class MainPageViewModel
         {
             if (SetProperty(ref _deckTransitionEnabled, value))
             {
+                if (!_deckTransitionEnabled && _selectedTransitionMode != DancePilotTransitionModes.Off)
+                {
+                    _selectedTransitionMode = DancePilotTransitionModes.Off;
+                    OnPropertyChanged(nameof(SelectedTransitionMode));
+                }
+                else if (_deckTransitionEnabled && _selectedTransitionMode == DancePilotTransitionModes.Off)
+                {
+                    _selectedTransitionMode = DancePilotTransitionModes.Auto;
+                    OnPropertyChanged(nameof(SelectedTransitionMode));
+                }
+
                 OnPropertyChanged(nameof(DeckTransitionStatus));
+                OnPropertyChanged(nameof(TransitionBehaviorNotice));
+                UpdateNextUpFromDecks();
                 _ = SavePlaybackSettingsAsync();
             }
         }
@@ -764,6 +774,7 @@ public sealed partial class MainPageViewModel
             {
                 OnPropertyChanged(nameof(CrossfaderDisplay));
                 OnPropertyChanged(nameof(MixerStateDisplay));
+                ApplyLocalOutputLevels();
                 _ = SavePlaybackSettingsAsync();
             }
         }
@@ -774,28 +785,45 @@ public sealed partial class MainPageViewModel
     public string MixerStateDisplay =>
         $"LOW {LowFrequencyGainDisplay}  MID {MidFrequencyGainDisplay}  HIGH {HighFrequencyGainDisplay}  {CrossfaderDisplay}";
 
-    public string TransitionBehaviorNotice => AlwaysFadeSongs
-        ? StartTransitionOnFade
-            ? $"Next song starts {TransitionOverlapDisplay} before the end; fade-out begins up to {FadeOutSecondsDisplay} earlier."
-            : $"Next song starts {TransitionOverlapDisplay} before the end without pre-fade automation."
-        : $"Next song starts {TransitionOverlapDisplay} before the end.";
+    public string TransitionBehaviorNotice
+    {
+        get
+        {
+            var timing = AlwaysFadeSongs
+                ? StartTransitionOnFade
+                    ? $"Next song starts {TransitionOverlapDisplay} before the end; fade-out begins up to {FadeOutSecondsDisplay} earlier."
+                    : $"Next song starts {TransitionOverlapDisplay} before the end without pre-fade automation."
+                : $"Next song starts {TransitionOverlapDisplay} before the end.";
 
-    public IReadOnlyList<string> TransitionModeOptions { get; } =
-    [
-        TransitionOppositeDeck,
-        TransitionSameDeck
-    ];
+            return ResolveRequestedTransitionMode() switch
+            {
+                DancePilotTransitionModes.Off => "Automatic transition is off.",
+                DancePilotTransitionModes.SameDeck => $"Same Deck: continue in the playing deck. Local crossfade is used for local-to-local when a deck player is free; Spotify Connect is handoff only. {timing}",
+                DancePilotTransitionModes.AlternateDecks => $"Alternate Decks: use the other deck only when it has a playable item. Local crossfade is used for local-to-local; Spotify Connect is handoff only. {timing}",
+                _ => $"Auto: use other deck if ready, otherwise continue same deck. Local crossfade is used for local-to-local; Spotify Connect is handoff only. {timing}"
+            };
+        }
+    }
+
+    public IReadOnlyList<string> TransitionModeOptions { get; } = DancePilotTransitionModes.Options;
 
     public string SelectedTransitionMode
     {
         get => _selectedTransitionMode;
         set
         {
-            var normalized = TransitionModeOptions.Contains(value)
-                ? value
-                : TransitionOppositeDeck;
+            var normalized = DancePilotTransitionModes.Normalize(value);
             if (SetProperty(ref _selectedTransitionMode, normalized))
             {
+                var shouldEnableTransition = normalized != DancePilotTransitionModes.Off;
+                if (_deckTransitionEnabled != shouldEnableTransition)
+                {
+                    _deckTransitionEnabled = shouldEnableTransition;
+                    OnPropertyChanged(nameof(DeckTransitionEnabled));
+                    OnPropertyChanged(nameof(DeckTransitionStatus));
+                }
+
+                OnPropertyChanged(nameof(TransitionBehaviorNotice));
                 OnPropertyChanged(nameof(NextDeckHeader));
                 UpdateNextUpFromDecks();
                 _ = SavePlaybackSettingsAsync();
@@ -803,41 +831,86 @@ public sealed partial class MainPageViewModel
         }
     }
 
-    public double DeckAVolume
+
+    public double DeckAFader
     {
         get => _deckAVolume;
         set
         {
             if (SetProperty(ref _deckAVolume, Math.Clamp(value, 0, 100)))
             {
-                OnDeckVolumeChanged("Deck A", nameof(DeckAVolumeDisplay));
+                OnDeckFaderChanged(
+                    "Deck A",
+                    nameof(DeckAFaderDisplay),
+                    nameof(DeckAVolume),
+                    nameof(DeckAVolumeDisplay));
             }
         }
     }
 
-    public string DeckAVolumeDisplay => FormatVolume(DeckAVolume);
+    public string DeckAFaderDisplay => FormatVolume(DeckAFader);
 
-    public double DeckBVolume
+    public double DeckBFader
     {
         get => _deckBVolume;
         set
         {
             if (SetProperty(ref _deckBVolume, Math.Clamp(value, 0, 100)))
             {
-                OnDeckVolumeChanged("Deck B", nameof(DeckBVolumeDisplay));
+                OnDeckFaderChanged(
+                    "Deck B",
+                    nameof(DeckBFaderDisplay),
+                    nameof(DeckBVolume),
+                    nameof(DeckBVolumeDisplay));
             }
         }
     }
 
-    public string DeckBVolumeDisplay => FormatVolume(DeckBVolume);
+    public string DeckBFaderDisplay => FormatVolume(DeckBFader);
 
-    public double DefaultSpotifyVolume
+    // Legacy aliases for persisted settings; deck controls are faders, not output volume.
+    public double DeckAVolume
     {
-        get => ResolveDeckVolume(ActiveDeckName);
-        set => SetDeckVolume(ActiveDeckName, value);
+        get => DeckAFader;
+        set => DeckAFader = value;
     }
 
-    public string DefaultSpotifyVolumeDisplay => FormatVolume(DefaultSpotifyVolume);
+    public string DeckAVolumeDisplay => DeckAFaderDisplay;
+
+    public double DeckBVolume
+    {
+        get => DeckBFader;
+        set => DeckBFader = value;
+    }
+
+    public string DeckBVolumeDisplay => DeckBFaderDisplay;
+
+    public double MainOutputVolume
+    {
+        get => _defaultSpotifyVolume;
+        set
+        {
+            if (SetProperty(ref _defaultSpotifyVolume, Math.Clamp(value, 0, 100)))
+            {
+                OnPropertyChanged(nameof(MainOutputVolumeDisplay));
+                OnPropertyChanged(nameof(DefaultSpotifyVolume));
+                OnPropertyChanged(nameof(DefaultSpotifyVolumeDisplay));
+                ApplyLocalOutputLevels();
+                _ = SavePlaybackSettingsAsync();
+            }
+        }
+    }
+
+    // Legacy alias for older bindings; this is the one main output volume.
+    public double DefaultSpotifyVolume
+    {
+        get => MainOutputVolume;
+        set => MainOutputVolume = value;
+    }
+
+    public string MainOutputVolumeDisplay => FormatVolume(MainOutputVolume);
+
+    public string DefaultSpotifyVolumeDisplay => MainOutputVolumeDisplay;
 
     public double SeekPositionSeconds
     {
@@ -872,10 +945,18 @@ public sealed partial class MainPageViewModel
     }
 
     public Task CommitVolumeChangeAsync() =>
-        CommitDeckVolumeChangeAsync(ActiveDeckName);
+        SetMainOutputVolumeAsync();
+
+    public Task CommitDeckFaderChangeAsync(string deckName)
+    {
+        var normalizedDeckName = NormalizeDeckName(deckName);
+        ApplyLocalOutputLevelIfDeckIsLive(normalizedDeckName);
+        SpotifyOperationMessage = $"{normalizedDeckName} fader set to {FormatVolume(ResolveDeckFader(normalizedDeckName))}. Main volume unchanged.";
+        return SavePlaybackSettingsAsync();
+    }
 
     public Task CommitDeckVolumeChangeAsync(string deckName) =>
-        SetDeckOutputVolumeAsync(deckName);
+        CommitDeckFaderChangeAsync(deckName);
 
     public string CurrentOutputStatus
     {
@@ -949,7 +1030,7 @@ public sealed partial class MainPageViewModel
         private set => SetProperty(ref _nextUpArtist, value);
     }
 
-    public string SpotifyTransitionNotice => "Deck A/B plan Spotify Connect handoffs. DancePilot controls one Spotify output at a time and does not mix two Spotify streams.";
+    public string SpotifyTransitionNotice => "Local decks can crossfade with DancePilot players. Spotify Connect transition: handoff only; Deck A/B faders do not independently mix Spotify streams.";
 
     public string EventName => "Saturday Night Dance";
 
@@ -1327,15 +1408,22 @@ public sealed partial class MainPageViewModel
 
         if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
         {
-            var duration = _localMediaPlayer.PlaybackSession.NaturalDuration > TimeSpan.Zero
-                ? _localMediaPlayer.PlaybackSession.NaturalDuration
-                : SelectedLocalMusicTrack?.Duration;
+            var localState = FindLocalPlaybackState(deckName, displayItem.Id);
+            if (localState is null)
+            {
+                return 0;
+            }
+
+            var player = LocalPlayerForPlayerDeck(localState.PlayerDeckName);
+            var duration = player.PlaybackSession.NaturalDuration > TimeSpan.Zero
+                ? player.PlaybackSession.NaturalDuration
+                : localState.Track?.Duration;
             if (duration is not TimeSpan durationValue || durationValue <= TimeSpan.Zero)
             {
                 return 0;
             }
 
-            return Math.Clamp(_localMediaPlayer.PlaybackSession.Position.TotalSeconds / durationValue.TotalSeconds, 0, 1);
+            return Math.Clamp(player.PlaybackSession.Position.TotalSeconds / durationValue.TotalSeconds, 0, 1);
         }
 
         if (SeekPositionMaximumSeconds <= 1)
@@ -1465,7 +1553,12 @@ public sealed partial class MainPageViewModel
             return null;
         }
 
-        return _localAudioAnalysisService.Analyze(filePath, _localMediaPlayer.PlaybackSession.Position, waveformBarCount: DeckWaveformBarCount);
+        if (!TryGetActiveLocalPlayback(out _, out var player))
+        {
+            return null;
+        }
+
+        return _localAudioAnalysisService.Analyze(filePath, player.PlaybackSession.Position, waveformBarCount: DeckWaveformBarCount);
     }
 
     private void UpdateLiveDeckAnalyzer(ObservableCollection<WaveBar> bars, LocalAudioSpectrumSnapshot snapshot, string deckName)
@@ -2091,52 +2184,64 @@ public sealed partial class MainPageViewModel
     private static string FormatVolume(double value) =>
         $"{value:N0}%";
 
-    private void OnDeckVolumeChanged(string deckName, string displayPropertyName)
+    private void OnDeckFaderChanged(
+        string deckName,
+        string displayPropertyName,
+        string legacyValuePropertyName,
+        string legacyDisplayPropertyName)
     {
-        _defaultSpotifyVolume = ResolveDeckVolume(ActiveDeckName);
         OnPropertyChanged(displayPropertyName);
-        OnPropertyChanged(nameof(DefaultSpotifyVolume));
-        OnPropertyChanged(nameof(DefaultSpotifyVolumeDisplay));
-        ApplyLocalVolumeIfDeckIsLive(deckName);
+        OnPropertyChanged(legacyValuePropertyName);
+        OnPropertyChanged(legacyDisplayPropertyName);
+        ApplyLocalOutputLevelIfDeckIsLive(deckName);
         _ = SavePlaybackSettingsAsync();
     }
 
-    private void SetDeckVolume(string deckName, double volume)
+    private DancePilotMixLevels CurrentMixLevels =>
+        new(MainOutputVolume, DeckAFader, DeckBFader, CrossfaderPosition);
+
+    private double ResolveDeckFader(string deckName) =>
+        NormalizeDeckName(deckName) == "Deck B" ? DeckBFader : DeckAFader;
+
+    private int ResolveMainOutputVolumePercent() =>
+        Math.Clamp(Convert.ToInt32(MainOutputVolume), 0, 100);
+
+    private double ResolveLocalOutputLevel(string deckName)
     {
-        if (NormalizeDeckName(deckName) == "Deck B")
-        {
-            DeckBVolume = volume;
-        }
-        else
-        {
-            DeckAVolume = volume;
-        }
+        var levels = CurrentMixLevels;
+        return NormalizeDeckName(deckName) == "Deck B"
+            ? levels.DeckBLocalOutputLevel
+            : levels.DeckALocalOutputLevel;
     }
 
-    private double ResolveDeckVolume(string deckName) =>
-        NormalizeDeckName(deckName) == "Deck B" ? DeckBVolume : DeckAVolume;
-
-    private int ResolveDeckVolumePercent(string deckName) =>
-        Math.Clamp(Convert.ToInt32(ResolveDeckVolume(deckName)), 0, 100);
-
-    private double ResolveDeckVolumeScalar(string deckName) =>
-        Math.Clamp(ResolveDeckVolume(deckName) / 100d, 0, 1);
-
-    private bool ShouldApplyVolumeToLiveOutput(string deckName)
+    private bool ShouldApplyLocalOutputLevelToDeck(string deckName)
     {
         var normalizedDeckName = NormalizeDeckName(deckName);
-        return IsDeckPlaying(normalizedDeckName)
+        return _localDeckPlaybackStates.Values.Any(state =>
+                state.IsLoaded
+                && string.Equals(state.LogicalDeckName, normalizedDeckName, StringComparison.Ordinal))
             || (_playingDeckQueueItemId is null
                 && string.Equals(ActiveDeckName, normalizedDeckName, StringComparison.Ordinal));
     }
 
-    private void ApplyLocalVolumeIfDeckIsLive(string deckName)
+    private void ApplyLocalOutputLevelIfDeckIsLive(string deckName)
     {
         var normalizedDeckName = NormalizeDeckName(deckName);
         if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture
-            && ShouldApplyVolumeToLiveOutput(normalizedDeckName))
+            && ShouldApplyLocalOutputLevelToDeck(normalizedDeckName))
         {
-            _localMediaPlayer.Volume = ResolveDeckVolumeScalar(normalizedDeckName);
+            foreach (var state in _localDeckPlaybackStates.Values.Where(state =>
+                state.IsLoaded
+                && string.Equals(state.LogicalDeckName, normalizedDeckName, StringComparison.Ordinal)))
+            {
+                LocalPlayerForPlayerDeck(state.PlayerDeckName).Volume = ResolveLocalOutputLevel(normalizedDeckName);
+            }
         }
+    }
+
+    private void ApplyLocalOutputLevels()
+    {
+        ApplyLocalOutputLevelIfDeckIsLive("Deck A");
+        ApplyLocalOutputLevelIfDeckIsLive("Deck B");
     }
 }

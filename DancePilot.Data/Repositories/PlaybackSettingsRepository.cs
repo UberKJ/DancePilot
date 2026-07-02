@@ -58,7 +58,7 @@ public sealed class PlaybackSettingsRepository
             DeckTransitionOverlapSeconds = ParseInt(
                 settings.GetValueOrDefault(DeckTransitionOverlapSecondsKey),
                 ParseInt(settings.GetValueOrDefault(DeckTransitionSecondsBeforeEndKey), 8)),
-            DeckTransitionMode = settings.GetValueOrDefault(DeckTransitionModeKey, "Opposite deck next item"),
+            DeckTransitionMode = settings.GetValueOrDefault(DeckTransitionModeKey, DancePilotTransitionModes.Auto),
             FadeInSeconds = Math.Max(ParseInt(settings.GetValueOrDefault(FadeInSecondsKey), 6), 6),
             FadeOutSeconds = Math.Max(ParseInt(settings.GetValueOrDefault(FadeOutSecondsKey), 10), 10),
             AlwaysFadeSongs = !bool.TryParse(settings.GetValueOrDefault(AlwaysFadeSongsKey), out var alwaysFadeSongs) || alwaysFadeSongs,

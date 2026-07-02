@@ -29,8 +29,6 @@ public sealed partial class MainPageViewModel : ObservableObject
     private const string SourceYouTube = "YouTube";
     private const string SourceTidal = "Tidal";
     private const string SourceLocal = "Local";
-    private const string TransitionSameDeck = "Same deck next item";
-    private const string TransitionOppositeDeck = "Opposite deck next item";
     private const string DefaultCurrentAlbumArtPath = "ms-appx:///Assets/AlbumDanceFloor.png";
     private const string DefaultNextAlbumArtPath = "ms-appx:///Assets/AlbumDanceFloor.png";
     private const string DefaultLocalAlbumArtPath = "ms-appx:///Assets/AlbumDanceFloor.png";
@@ -68,7 +66,8 @@ public sealed partial class MainPageViewModel : ObservableObject
     private readonly SystemAudioOutputAnalysisService _systemAudioOutputAnalysisService;
     private readonly AlbumArtCacheService _albumArtCacheService;
     private readonly ExternalAlbumArtLookupService _externalAlbumArtLookupService;
-    private readonly MediaPlayer _localMediaPlayer;
+    private readonly MediaPlayer _deckALocalMediaPlayer;
+    private readonly MediaPlayer _deckBLocalMediaPlayer;
     private readonly Microsoft.UI.Dispatching.DispatcherQueue? _dispatcherQueue;
     private readonly DispatcherTimer _playbackTimer;
     private readonly DispatcherTimer _analyzerTimer;
@@ -86,6 +85,11 @@ public sealed partial class MainPageViewModel : ObservableObject
     {
         ["Deck A"] = new(null, null),
         ["Deck B"] = new(null, null)
+    };
+    private readonly Dictionary<string, LocalDeckPlaybackState> _localDeckPlaybackStates = new(StringComparer.Ordinal)
+    {
+        ["Deck A"] = new("Deck A"),
+        ["Deck B"] = new("Deck B")
     };
     private readonly List<LocalMusicTrack> _allLocalMusicTracks = [];
     private readonly List<DancePilotQueueItem> _deckAQueue = [];
@@ -128,11 +132,6 @@ public sealed partial class MainPageViewModel : ObservableObject
     private string _queueViewDeckName = "Deck A";
     private string _playingDeckName = "Deck A";
     private int? _playingDeckQueueItemId;
-    private string? _localPlaybackDeckName;
-    private int? _localPlaybackQueueItemId;
-    private DateTimeOffset? _localPlaybackRequestedAt;
-    private int? _localPlaybackPreviousLastPlayedQueueItemId;
-    private bool _localPlaybackProgressObserved;
     private int? _lastTransitionSourceItemId;
     private int? _lastTransitionTargetItemId;
     private bool _isPlaybackPlaying;
@@ -169,7 +168,7 @@ public sealed partial class MainPageViewModel : ObservableObject
     private string _currentSpotifyPlaylistName = "No Spotify playlist active";
     private string _nextUpTitle = "No queued recommendation";
     private string _nextUpArtist = "DancePilot queue";
-    private string _selectedTransitionMode = TransitionOppositeDeck;
+    private string _selectedTransitionMode = DancePilotTransitionModes.Auto;
     private bool _isPlaybackRefreshRunning;
     private bool _isTransitionAdvanceRunning;
     private bool _isAutoPilotEnabled = true;
@@ -205,7 +204,8 @@ public sealed partial class MainPageViewModel : ObservableObject
         _systemAudioOutputAnalysisService = services.SystemAudioOutputAnalysisService;
         _albumArtCacheService = services.AlbumArtCacheService;
         _externalAlbumArtLookupService = services.ExternalAlbumArtLookupService;
-        _localMediaPlayer = services.LocalMediaPlayer;
+        _deckALocalMediaPlayer = services.LocalMediaPlayer;
+        _deckBLocalMediaPlayer = services.DeckBLocalMediaPlayer;
         _playbackCoordinator = services.PlaybackCoordinator;
         _dispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
 
@@ -280,7 +280,8 @@ public sealed partial class MainPageViewModel : ObservableObject
         _analyzerTimer.Tick += (_, _) => UpdateDeckAnalyzers();
         _analyzerTimer.Start();
 
-        _localMediaPlayer.MediaEnded += (_, _) => DispatchAsync(HandleLocalMediaEndedAsync);
+        _deckALocalMediaPlayer.MediaEnded += (_, _) => DispatchAsync(() => HandleLocalMediaEndedAsync("Deck A"));
+        _deckBLocalMediaPlayer.MediaEnded += (_, _) => DispatchAsync(() => HandleLocalMediaEndedAsync("Deck B"));
 
         _ = InitializeAsync(services.ConnectionFactory);
         StartupLog.Write("MainPageViewModel constructor complete");
@@ -349,9 +350,9 @@ public sealed partial class MainPageViewModel : ObservableObject
         AutoplaySecondsBeforeEnd = settings.AutoplaySecondsBeforeEnd;
         DeckTransitionEnabled = settings.DeckTransitionEnabled;
         TransitionOverlapSeconds = settings.DeckTransitionOverlapSeconds;
-        SelectedTransitionMode = TransitionModeOptions.Contains(settings.DeckTransitionMode)
-            ? settings.DeckTransitionMode
-            : TransitionOppositeDeck;
+        SelectedTransitionMode = settings.DeckTransitionEnabled
+            ? DancePilotTransitionModes.Normalize(settings.DeckTransitionMode)
+            : DancePilotTransitionModes.Off;
         FadeInSeconds = Math.Max(settings.FadeInSeconds, DefaultSmoothFadeInSeconds);
         FadeOutSeconds = Math.Max(settings.FadeOutSeconds, DefaultSmoothFadeOutSeconds);
         AlwaysFadeSongs = settings.AlwaysFadeSongs;
@@ -362,8 +363,12 @@ public sealed partial class MainPageViewModel : ObservableObject
         HighFrequencyGain = settings.HighFrequencyGain;
         CrossfaderPosition = settings.CrossfaderPosition;
         _defaultSpotifyVolume = Math.Clamp(settings.DefaultVolume, 0, 100);
-        DeckAVolume = settings.DeckAVolume;
-        DeckBVolume = settings.DeckBVolume;
+        OnPropertyChanged(nameof(MainOutputVolume));
+        OnPropertyChanged(nameof(MainOutputVolumeDisplay));
+        OnPropertyChanged(nameof(DefaultSpotifyVolume));
+        OnPropertyChanged(nameof(DefaultSpotifyVolumeDisplay));
+        DeckAFader = settings.DeckAVolume;
+        DeckBFader = settings.DeckBVolume;
         _selectedOutputDeviceId = settings.SelectedDeviceId;
         SelectedOutputDeviceName = string.IsNullOrWhiteSpace(settings.SelectedDeviceName)
             ? "No Spotify device selected"
@@ -386,9 +391,9 @@ public sealed partial class MainPageViewModel : ObservableObject
         PlaybackMode = SelectedPlaybackMode,
         AutopilotEnabled = SpotifyAutopilotEnabled,
         AutoplaySecondsBeforeEnd = Math.Max(1, Convert.ToInt32(AutoplaySecondsBeforeEnd)),
-        DefaultVolume = Math.Clamp(Convert.ToInt32(_defaultSpotifyVolume), 0, 100),
-        DeckAVolume = Math.Clamp(Convert.ToInt32(DeckAVolume), 0, 100),
-        DeckBVolume = Math.Clamp(Convert.ToInt32(DeckBVolume), 0, 100),
+        DefaultVolume = Math.Clamp(Convert.ToInt32(MainOutputVolume), 0, 100),
+        DeckAVolume = Math.Clamp(Convert.ToInt32(DeckAFader), 0, 100),
+        DeckBVolume = Math.Clamp(Convert.ToInt32(DeckBFader), 0, 100),
         DeckTransitionEnabled = DeckTransitionEnabled,
         DeckTransitionSecondsBeforeEnd = Math.Max(0, Convert.ToInt32(TransitionOverlapSeconds)),
         DeckTransitionOverlapSeconds = Math.Max(0, Convert.ToInt32(TransitionOverlapSeconds)),
@@ -562,7 +567,13 @@ public sealed partial class MainPageViewModel : ObservableObject
     {
         try
         {
-            _localMediaPlayer.Pause();
+            _deckALocalMediaPlayer.Pause();
+            _deckBLocalMediaPlayer.Pause();
+            foreach (var state in _localDeckPlaybackStates.Values)
+            {
+                state.Clear();
+            }
+
             IsPlaybackPlaying = false;
             if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
             {
@@ -854,6 +865,35 @@ public sealed partial class MainPageViewModel : ObservableObject
             : !string.IsNullOrWhiteSpace(track.SpotifyUri)
                 ? track.SpotifyUri
                 : track.SpotifyTrackId;
+
+    private sealed class LocalDeckPlaybackState(string playerDeckName)
+    {
+        public string PlayerDeckName { get; } = playerDeckName;
+
+        public string LogicalDeckName { get; set; } = playerDeckName;
+
+        public int? QueueItemId { get; set; }
+
+        public DateTimeOffset? RequestedAt { get; set; }
+
+        public int? PreviousLastPlayedQueueItemId { get; set; }
+
+        public bool ProgressObserved { get; set; }
+
+        public LocalMusicTrack? Track { get; set; }
+
+        public bool IsLoaded => QueueItemId is not null;
+
+        public void Clear()
+        {
+            LogicalDeckName = PlayerDeckName;
+            QueueItemId = null;
+            RequestedAt = null;
+            PreviousLastPlayedQueueItemId = null;
+            ProgressObserved = false;
+            Track = null;
+        }
+    }
 }
 
 public sealed record WaveBar(double Height, Brush Fill)

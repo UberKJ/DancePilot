@@ -390,7 +390,41 @@ public sealed partial class MainPageViewModel
         await QueueLocalTrackToDeckAsync(SelectedLocalMusicTrack, ActiveDeckName);
     }
 
-    private Task<bool> StartSelectedLocalMusicAsync(string? deckName = null, int? queueItemId = null)
+    private MediaPlayer LocalPlayerForPlayerDeck(string deckName) =>
+        NormalizeDeckName(deckName) == "Deck B" ? _deckBLocalMediaPlayer : _deckALocalMediaPlayer;
+
+    private LocalDeckPlaybackState LocalPlaybackStateForPlayerDeck(string deckName) =>
+        _localDeckPlaybackStates[NormalizeDeckName(deckName)];
+
+    private LocalDeckPlaybackState? FindLocalPlaybackState(string logicalDeckName, int? queueItemId = null)
+    {
+        var normalizedDeckName = NormalizeDeckName(logicalDeckName);
+        return _localDeckPlaybackStates.Values.FirstOrDefault(state =>
+            state.IsLoaded
+            && string.Equals(state.LogicalDeckName, normalizedDeckName, StringComparison.Ordinal)
+            && (queueItemId is null || state.QueueItemId == queueItemId));
+    }
+
+    private bool TryGetActiveLocalPlayback(out LocalDeckPlaybackState state, out MediaPlayer player)
+    {
+        if (_playingDeckQueueItemId is int itemId
+            && FindLocalPlaybackState(_playingDeckName, itemId) is LocalDeckPlaybackState activeState)
+        {
+            state = activeState;
+            player = LocalPlayerForPlayerDeck(activeState.PlayerDeckName);
+            return true;
+        }
+
+        state = LocalPlaybackStateForPlayerDeck("Deck A");
+        player = _deckALocalMediaPlayer;
+        return false;
+    }
+
+    private Task<bool> StartSelectedLocalMusicAsync(
+        string? deckName = null,
+        int? queueItemId = null,
+        string? playerDeckName = null,
+        bool startMuted = false)
     {
         if (SelectedLocalMusicTrack is null)
         {
@@ -406,17 +440,22 @@ public sealed partial class MainPageViewModel
 
         var fileUri = new Uri(SelectedLocalMusicTrack.FilePath);
         var playbackDeckName = NormalizeDeckName(deckName ?? ActiveDeckName);
-        _localPlaybackDeckName = playbackDeckName;
-        _localPlaybackQueueItemId = queueItemId;
-        _localPlaybackRequestedAt = DateTimeOffset.UtcNow;
-        _localPlaybackPreviousLastPlayedQueueItemId = _lastPlayedDeckQueueItemIds.GetValueOrDefault(playbackDeckName);
-        _localPlaybackProgressObserved = false;
-        _localMediaPlayer.Source = MediaSource.CreateFromUri(fileUri);
-        _localMediaPlayer.Volume = AlwaysFadeSongs
+        var playerDeck = NormalizeDeckName(playerDeckName ?? playbackDeckName);
+        var state = LocalPlaybackStateForPlayerDeck(playerDeck);
+        var player = LocalPlayerForPlayerDeck(playerDeck);
+
+        state.LogicalDeckName = playbackDeckName;
+        state.QueueItemId = queueItemId;
+        state.RequestedAt = DateTimeOffset.UtcNow;
+        state.PreviousLastPlayedQueueItemId = _lastPlayedDeckQueueItemIds.GetValueOrDefault(playbackDeckName);
+        state.ProgressObserved = false;
+        state.Track = SelectedLocalMusicTrack;
+        player.Source = MediaSource.CreateFromUri(fileUri);
+        player.Volume = startMuted || AlwaysFadeSongs
             ? 0
-            : ResolveDeckVolumeScalar(playbackDeckName);
-        _localMediaPlayer.Play();
-        StartupLog.Write($"Local playback requested for {playbackDeckName} item {queueItemId?.ToString() ?? "<direct>"}: {SelectedLocalMusicTrack.FilePath}");
+            : ResolveLocalOutputLevel(playbackDeckName);
+        player.Play();
+        StartupLog.Write($"Local playback requested for {playbackDeckName} via {playerDeck} player item {queueItemId?.ToString() ?? "<direct>"}: {SelectedLocalMusicTrack.FilePath}");
 
         SeekPositionMaximumSeconds = SelectedLocalMusicTrack.Duration?.TotalSeconds ?? 1;
         SeekPositionSeconds = 0;
@@ -436,7 +475,12 @@ public sealed partial class MainPageViewModel
 
     private void SeekLocalPlaybackTo(TimeSpan requestedPosition)
     {
-        var session = _localMediaPlayer.PlaybackSession;
+        if (!TryGetActiveLocalPlayback(out _, out var player))
+        {
+            return;
+        }
+
+        var session = player.PlaybackSession;
         var target = requestedPosition < TimeSpan.Zero
             ? TimeSpan.Zero
             : requestedPosition;
@@ -463,7 +507,11 @@ public sealed partial class MainPageViewModel
 
     private void PauseLocalMusic()
     {
-        _localMediaPlayer.Pause();
+        if (TryGetActiveLocalPlayback(out _, out var player))
+        {
+            player.Pause();
+        }
+
         IsPlaybackPlaying = false;
         SpotifyPlaybackStatus = "Local paused";
         CurrentOutputStatus = "Local file playback paused.";
@@ -472,13 +520,14 @@ public sealed partial class MainPageViewModel
 
     private void ResumeLocalMusic()
     {
-        _localMediaPlayer.Volume = ResolveDeckVolumeScalar(_playingDeckName);
-        _localMediaPlayer.Play();
-        if (_localPlaybackRequestedAt is null)
+        if (!TryGetActiveLocalPlayback(out var state, out var player))
         {
-            _localPlaybackRequestedAt = DateTimeOffset.UtcNow;
+            return;
         }
 
+        player.Volume = ResolveLocalOutputLevel(state.LogicalDeckName);
+        player.Play();
+        state.RequestedAt ??= DateTimeOffset.UtcNow;
         IsPlaybackPlaying = true;
         SpotifyPlaybackStatus = "Playing local";
         CurrentOutputStatus = $"Resumed local file on {_playingDeckName}.";
@@ -487,24 +536,20 @@ public sealed partial class MainPageViewModel
     }
 
     private bool IsLocalPlaybackLoadedForQueueItem(string deckName, DancePilotQueueItem item) =>
-        string.Equals(_localPlaybackDeckName, NormalizeDeckName(deckName), StringComparison.Ordinal)
-        && _localPlaybackQueueItemId == item.Id;
+        FindLocalPlaybackState(deckName, item.Id) is not null;
 
-    private void ClearLocalPlaybackMarker()
+    private void ClearLocalPlaybackMarker(string playerDeckName)
     {
-        _localPlaybackDeckName = null;
-        _localPlaybackQueueItemId = null;
-        _localPlaybackRequestedAt = null;
-        _localPlaybackPreviousLastPlayedQueueItemId = null;
-        _localPlaybackProgressObserved = false;
+        LocalPlaybackStateForPlayerDeck(playerDeckName).Clear();
     }
 
     private void RestoreUnstartedLocalPlaybackCursor(string deckName, int itemId)
     {
         var normalizedDeckName = NormalizeDeckName(deckName);
+        var state = FindLocalPlaybackState(normalizedDeckName, itemId);
         if (_lastPlayedDeckQueueItemIds.GetValueOrDefault(normalizedDeckName) == itemId)
         {
-            _lastPlayedDeckQueueItemIds[normalizedDeckName] = _localPlaybackPreviousLastPlayedQueueItemId;
+            _lastPlayedDeckQueueItemIds[normalizedDeckName] = state?.PreviousLastPlayedQueueItemId;
         }
 
         if (_selectedDeckQueueItemIds.GetValueOrDefault(normalizedDeckName) != itemId)
@@ -513,42 +558,48 @@ public sealed partial class MainPageViewModel
         }
     }
 
-    private void ObserveLocalPlaybackProgress(TimeSpan position)
+    private void ObserveLocalPlaybackProgress(LocalDeckPlaybackState state, TimeSpan position)
     {
-        if (_localPlaybackQueueItemId is null || _localPlaybackProgressObserved)
+        if (state.QueueItemId is null || state.ProgressObserved)
         {
             return;
         }
 
         if (position >= TimeSpan.FromMilliseconds(500))
         {
-            _localPlaybackProgressObserved = true;
+            state.ProgressObserved = true;
         }
     }
 
-    private bool HasLocalPlaybackActuallyStarted()
+    private bool HasLocalPlaybackActuallyStarted(string deckName, int? queueItemId = null)
     {
-        if (_localPlaybackProgressObserved)
+        var state = FindLocalPlaybackState(deckName, queueItemId);
+        if (state is null)
+        {
+            return false;
+        }
+
+        if (state.ProgressObserved)
         {
             return true;
         }
 
-        var session = _localMediaPlayer.PlaybackSession;
+        var session = LocalPlayerForPlayerDeck(state.PlayerDeckName).PlaybackSession;
         var position = session.Position < TimeSpan.Zero ? TimeSpan.Zero : session.Position;
         if (position >= TimeSpan.FromMilliseconds(500))
         {
-            _localPlaybackProgressObserved = true;
+            state.ProgressObserved = true;
             return true;
         }
 
         var duration = session.NaturalDuration > TimeSpan.Zero
             ? session.NaturalDuration
-            : SelectedLocalMusicTrack?.Duration;
+            : state.Track?.Duration;
         if (duration is TimeSpan durationValue
             && durationValue > TimeSpan.FromSeconds(1)
             && position >= durationValue - TimeSpan.FromMilliseconds(500))
         {
-            _localPlaybackProgressObserved = true;
+            state.ProgressObserved = true;
             return true;
         }
 
@@ -611,18 +662,20 @@ public sealed partial class MainPageViewModel
     {
         try
         {
-            var localPlaybackDeckName = _localPlaybackDeckName;
-            var localPlaybackQueueItemId = _localPlaybackQueueItemId;
-            var localPlaybackStarted = localPlaybackQueueItemId is not null && HasLocalPlaybackActuallyStarted();
-            _localMediaPlayer.Pause();
-            if (localPlaybackQueueItemId is not null
-                && !localPlaybackStarted
-                && !string.IsNullOrWhiteSpace(localPlaybackDeckName))
+            foreach (var state in _localDeckPlaybackStates.Values)
             {
-                RestoreUnstartedLocalPlaybackCursor(localPlaybackDeckName, localPlaybackQueueItemId.Value);
+                var queueItemId = state.QueueItemId;
+                var logicalDeckName = state.LogicalDeckName;
+                var localPlaybackStarted = queueItemId is not null && HasLocalPlaybackActuallyStarted(logicalDeckName, queueItemId);
+                LocalPlayerForPlayerDeck(state.PlayerDeckName).Pause();
+                if (queueItemId is not null && !localPlaybackStarted)
+                {
+                    RestoreUnstartedLocalPlaybackCursor(logicalDeckName, queueItemId.Value);
+                }
+
+                state.Clear();
             }
 
-            ClearLocalPlaybackMarker();
             if (ResolvePlayingDeckItem(_playingDeckName)?.Source == SongSources.Local)
             {
                 IsPlaybackPlaying = false;

@@ -61,6 +61,7 @@ internal static class AppServicesFactory
                 albumArtCacheFolder),
             ExternalAlbumArtLookupService = new ExternalAlbumArtLookupService(httpClient),
             LocalMediaPlayer = new MediaPlayer(),
+            DeckBLocalMediaPlayer = new MediaPlayer(),
             ConnectionFactory = connectionFactory
         };
     }

@@ -325,10 +325,9 @@ public sealed partial class MainPageViewModel
         }
 
         _playingDeckQueueItemId = null;
-        if (string.Equals(_localPlaybackDeckName, NormalizeDeckName(deckName), StringComparison.Ordinal)
-            && _localPlaybackQueueItemId == itemId)
+        if (FindLocalPlaybackState(deckName, itemId) is LocalDeckPlaybackState state)
         {
-            ClearLocalPlaybackMarker();
+            ClearLocalPlaybackMarker(state.PlayerDeckName);
         }
 
         _currentPlaybackAlbumArtUrl = null;
@@ -343,7 +342,7 @@ public sealed partial class MainPageViewModel
     {
         if (_playingDeckQueueItemId is not null)
         {
-            return await TryStartTransitionTargetAsync(skipFadeOut: !IsPlaybackPlaying);
+            return await TryStartTransitionTargetAsync(skipFadeOut: !IsPlaybackPlaying, isAutomatic: false);
         }
 
         var deckName = NormalizeDeckName(ActiveDeckName);
@@ -437,33 +436,60 @@ public sealed partial class MainPageViewModel
             fadeOutSeconds: CreateTransitionFadeOutDuration(remainingSeconds));
     }
 
-    private async Task<bool> TryStartTransitionTargetAsync(bool skipFadeOut = false, double? fadeOutSeconds = null)
+    private async Task<bool> TryStartTransitionTargetAsync(
+        bool skipFadeOut = false,
+        double? fadeOutSeconds = null,
+        bool isAutomatic = true)
     {
         if (_isTransitionAdvanceRunning)
         {
             return false;
         }
 
-        var sourceDeckName = _playingDeckName;
+        var sourceDeckName = NormalizeDeckName(_playingDeckName);
         var sourcePlaybackMode = SelectedPlaybackMode;
         _isTransitionAdvanceRunning = true;
         try
         {
             var sourceItemId = _playingDeckQueueItemId;
-            var targetDeckName = ResolveTransitionDeckName();
-            var next = FindTransitionTarget(targetDeckName);
-            if (sourceItemId is null || next is null)
+            if (sourceItemId is null)
             {
                 return false;
             }
 
-            if (next.Id == sourceItemId.Value)
+            var requestedMode = isAutomatic
+                ? ResolveRequestedTransitionMode()
+                : ResolveManualTransitionMode();
+            if (isAutomatic && requestedMode == DancePilotTransitionModes.Off)
             {
+                return false;
+            }
+
+            var decision = ResolveTransitionDecision(
+                item => TryValidateDeckQueueItemForPlayback(item, out _),
+                requestedModeOverride: requestedMode,
+                currentDeckNameOverride: sourceDeckName,
+                currentItemIdOverride: sourceItemId);
+            LogTransitionDecision(decision);
+
+            var targetDeckName = decision.ChosenDeckName;
+            var next = decision.ChosenItem;
+            if (next is null)
+            {
+                SpotifyOperationMessage = decision.StatusMessage;
+                return false;
+            }
+
+            if (string.Equals(targetDeckName, sourceDeckName, StringComparison.Ordinal)
+                && next.Id == sourceItemId.Value)
+            {
+                SpotifyOperationMessage = $"Transition target is already playing on {sourceDeckName}; continuing current playback.";
                 return false;
             }
 
             if (_lastTransitionSourceItemId == sourceItemId && _lastTransitionTargetItemId == next.Id)
             {
+                SpotifyOperationMessage = $"Transition to {next.Title} on {targetDeckName} is already in progress.";
                 return false;
             }
 
@@ -473,20 +499,52 @@ public sealed partial class MainPageViewModel
                 return false;
             }
 
-            if (skipFadeOut)
+            var currentItem = ResolveLoadedDeckItem(sourceDeckName);
+            var playbackPath = DancePilotTransitionPlaybackPath.Resolve(currentItem, next);
+            var usedLocalOverlap = false;
+            var started = false;
+
+            if (playbackPath == DancePilotTransitionPlaybackPathKind.LocalOverlap
+                && currentItem is not null)
             {
-                await SilenceCurrentPlaybackForImmediateTransitionAsync();
-            }
-            else
-            {
-                await FadeCurrentPlaybackOutAsync(fadeOutSeconds);
+                usedLocalOverlap = await TryStartLocalOverlapTransitionAsync(
+                    sourceDeckName,
+                    sourceItemId.Value,
+                    currentItem,
+                    targetDeckName,
+                    next,
+                    skipFadeOut,
+                    fadeOutSeconds);
+                started = usedLocalOverlap;
+                if (!usedLocalOverlap)
+                {
+                    StartupLog.Write("Local overlap unavailable; falling back to handoff start.");
+                }
             }
 
-            var started = await PlayDeckQueueItemAsync(next, targetDeckName, isTransition: true);
+            if (!started)
+            {
+                if (playbackPath == DancePilotTransitionPlaybackPathKind.SpotifyConnectHandoff)
+                {
+                    SpotifyOperationMessage = "Spotify Connect transition: handoff only.";
+                }
+
+                if (skipFadeOut)
+                {
+                    await SilenceCurrentPlaybackForImmediateTransitionAsync();
+                }
+                else
+                {
+                    await FadeCurrentPlaybackOutAsync(fadeOutSeconds);
+                }
+
+                started = await PlayDeckQueueItemAsync(next, targetDeckName, isTransition: true);
+            }
+
             if (!started || _playingDeckQueueItemId != next.Id)
             {
                 await RestoreDeckOutputVolumeAsync(sourceDeckName, sourcePlaybackMode);
-                SpotifyOperationMessage = $"Deck transition could not start {next.Title} on {targetDeckName}. Volume was restored.";
+                SpotifyOperationMessage = $"Deck transition could not start {next.Title} on {targetDeckName}. Output volume was restored.";
                 return false;
             }
 
@@ -498,20 +556,153 @@ public sealed partial class MainPageViewModel
                 RemovePlayedQueueItem(sourceDeckName, sourceItemId.Value);
             }
 
-            await FadeIncomingPlaybackInAsync();
+            if (!usedLocalOverlap)
+            {
+                await FadeIncomingPlaybackInAsync();
+            }
+
+            SpotifyOperationMessage = CreateTransitionStartedMessage(
+                decision,
+                playbackPath,
+                usedLocalOverlap,
+                next,
+                targetDeckName);
             return true;
         }
         catch (Exception ex)
         {
             StartupLog.Write($"Deck transition failed: {ex.Message}");
             await RestoreDeckOutputVolumeAsync(sourceDeckName, sourcePlaybackMode);
-            SpotifyOperationMessage = $"Deck transition failed: {ex.Message}. Volume was restored.";
+            SpotifyOperationMessage = $"Deck transition failed: {ex.Message}. Output volume was restored.";
             return false;
         }
         finally
         {
             _isTransitionAdvanceRunning = false;
         }
+    }
+
+    private void LogTransitionDecision(DancePilotTransitionDecision decision)
+    {
+        var item = decision.ChosenItem;
+        StartupLog.Write(
+            "Transition decision: "
+            + $"currentDeck={decision.CurrentDeckName}; "
+            + $"requestedMode={decision.RequestedMode}; "
+            + $"chosenDeck={decision.ChosenDeckName}; "
+            + $"chosenItemId={item?.Id.ToString() ?? "<none>"}; "
+            + $"title={item?.Title ?? "<none>"}; "
+            + $"source={item?.Source ?? "<none>"}; "
+            + $"fallbackReason={decision.FallbackReason ?? "<none>"}");
+    }
+
+    private async Task<bool> TryStartLocalOverlapTransitionAsync(
+        string sourceDeckName,
+        int sourceItemId,
+        DancePilotQueueItem sourceItem,
+        string targetDeckName,
+        DancePilotQueueItem next,
+        bool skipFadeOut,
+        double? fadeOutSeconds)
+    {
+        var sourceState = FindLocalPlaybackState(sourceDeckName, sourceItemId);
+        if (sourceState is null || sourceItem.Source != SongSources.Local || next.Source != SongSources.Local)
+        {
+            return false;
+        }
+
+        var targetPlayerDeckName = ResolveLocalOverlapPlayerDeckName(sourceState.PlayerDeckName, targetDeckName);
+        if (targetPlayerDeckName is null)
+        {
+            return false;
+        }
+
+        var localTrack = await ResolveLocalQueueTrackAsync(next);
+        if (localTrack is null)
+        {
+            SpotifyOperationMessage = $"Local file was not found: {next.Title}.";
+            return false;
+        }
+
+        SelectedLocalMusicTrack = ApplyQueueAlbumArtToLocalTrack(next, localTrack);
+        await PrepareOutputForDeckPlaybackAsync(next);
+        SetPlaybackModeForDeckPlayback(SpotifyPlaybackModes.LocalFilesFuture);
+
+        var started = await StartSelectedLocalMusicAsync(
+            targetDeckName,
+            next.Id,
+            targetPlayerDeckName,
+            startMuted: true);
+        if (!started)
+        {
+            return false;
+        }
+
+        MarkDeckItemPlaying(targetDeckName, next);
+
+        var sourcePlayer = LocalPlayerForPlayerDeck(sourceState.PlayerDeckName);
+        var targetPlayer = LocalPlayerForPlayerDeck(targetPlayerDeckName);
+        var targetVolume = ResolveLocalOutputLevel(targetDeckName);
+        if (AlwaysFadeSongs)
+        {
+            var fadeOutDuration = skipFadeOut
+                ? 0
+                : Math.Max(0, fadeOutSeconds ?? FadeOutSeconds);
+            await Task.WhenAll(
+                FadeLocalVolumeAsync(sourcePlayer, sourcePlayer.Volume, 0, fadeOutDuration),
+                FadeLocalVolumeAsync(targetPlayer, targetPlayer.Volume, targetVolume, FadeInSeconds));
+        }
+        else
+        {
+            targetPlayer.Volume = targetVolume;
+        }
+
+        sourcePlayer.Pause();
+        ClearLocalPlaybackMarker(sourceState.PlayerDeckName);
+        return true;
+    }
+
+    private string? ResolveLocalOverlapPlayerDeckName(string sourcePlayerDeckName, string targetDeckName)
+    {
+        var normalizedSourcePlayerDeckName = NormalizeDeckName(sourcePlayerDeckName);
+        var normalizedTargetDeckName = NormalizeDeckName(targetDeckName);
+        var preferredState = LocalPlaybackStateForPlayerDeck(normalizedTargetDeckName);
+        if (!string.Equals(normalizedSourcePlayerDeckName, normalizedTargetDeckName, StringComparison.Ordinal)
+            && !preferredState.IsLoaded)
+        {
+            return normalizedTargetDeckName;
+        }
+
+        var temporaryDeckName = OppositeDeckName(normalizedSourcePlayerDeckName);
+        var temporaryState = LocalPlaybackStateForPlayerDeck(temporaryDeckName);
+        return temporaryState.IsLoaded ? null : temporaryDeckName;
+    }
+
+    private string CreateTransitionStartedMessage(
+        DancePilotTransitionDecision decision,
+        DancePilotTransitionPlaybackPathKind playbackPath,
+        bool usedLocalOverlap,
+        DancePilotQueueItem next,
+        string targetDeckName)
+    {
+        if (usedLocalOverlap)
+        {
+            var prefix = decision.RequestedMode == DancePilotTransitionModes.Auto
+                ? decision.FallbackReason is null
+                    ? "Auto: using local crossfade."
+                    : "Auto: falling back to same deck advance. Local crossfade active."
+                : "Local crossfade active.";
+            return $"{prefix} Started {next.Title} on {targetDeckName}.";
+        }
+
+        if (playbackPath == DancePilotTransitionPlaybackPathKind.SpotifyConnectHandoff)
+        {
+            return $"Spotify Connect transition: handoff only. Started {next.Title} on {targetDeckName}.";
+        }
+
+        return decision.FallbackReason is null
+            ? $"Deck transition started {next.Title} on {targetDeckName}."
+            : $"{decision.StatusMessage} Started {next.Title} on {targetDeckName}.";
     }
 
     private double CreateTransitionFadeOutDuration(double remainingSeconds)
@@ -545,11 +736,15 @@ public sealed partial class MainPageViewModel
         {
             if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
             {
-                await FadeLocalVolumeAsync(_localMediaPlayer.Volume, 0, seconds);
+                if (TryGetActiveLocalPlayback(out _, out var player))
+                {
+                    await FadeLocalVolumeAsync(player, player.Volume, 0, seconds);
+                }
+
                 return;
             }
 
-            await FadeSpotifyVolumeAsync(ResolveDeckVolumePercent(_playingDeckName), 0, seconds);
+            await FadeSpotifyVolumeAsync(ResolveMainOutputVolumePercent(), 0, seconds);
         }
         catch (Exception ex)
         {
@@ -568,7 +763,11 @@ public sealed partial class MainPageViewModel
         {
             if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
             {
-                _localMediaPlayer.Volume = 0;
+                if (TryGetActiveLocalPlayback(out _, out var player))
+                {
+                    player.Volume = 0;
+                }
+
                 return;
             }
 
@@ -592,10 +791,13 @@ public sealed partial class MainPageViewModel
 
         if (targetPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
         {
-            var targetVolume = ResolveDeckVolumeScalar(targetDeckName);
+            var targetVolume = ResolveLocalOutputLevel(targetDeckName);
             try
             {
-                await FadeLocalVolumeAsync(_localMediaPlayer.Volume, targetVolume, FadeInSeconds);
+                if (TryGetActiveLocalPlayback(out _, out var player))
+                {
+                    await FadeLocalVolumeAsync(player, player.Volume, targetVolume, FadeInSeconds);
+                }
             }
             catch (Exception ex)
             {
@@ -603,13 +805,16 @@ public sealed partial class MainPageViewModel
             }
             finally
             {
-                _localMediaPlayer.Volume = targetVolume;
+                if (TryGetActiveLocalPlayback(out _, out var player))
+                {
+                    player.Volume = targetVolume;
+                }
             }
 
             return;
         }
 
-        await FadeSpotifyVolumeAsync(0, ResolveDeckVolumePercent(targetDeckName), FadeInSeconds);
+        await FadeSpotifyVolumeAsync(0, ResolveMainOutputVolumePercent(), FadeInSeconds);
         await RestoreDeckOutputVolumeAsync(targetDeckName, targetPlaybackMode);
     }
 
@@ -618,13 +823,17 @@ public sealed partial class MainPageViewModel
         var normalizedDeckName = NormalizeDeckName(deckName);
         if (playbackMode == SpotifyPlaybackModes.LocalFilesFuture)
         {
-            _localMediaPlayer.Volume = ResolveDeckVolumeScalar(normalizedDeckName);
+            if (FindLocalPlaybackState(normalizedDeckName) is LocalDeckPlaybackState state)
+            {
+                LocalPlayerForPlayerDeck(state.PlayerDeckName).Volume = ResolveLocalOutputLevel(normalizedDeckName);
+            }
+
             return;
         }
 
         if (playbackMode == SpotifyPlaybackModes.SpotifyConnect)
         {
-            await TrySetSpotifyVolumeImmediateAsync(ResolveDeckVolumePercent(normalizedDeckName));
+            await TrySetSpotifyVolumeImmediateAsync(ResolveMainOutputVolumePercent());
         }
     }
 
@@ -706,8 +915,14 @@ public sealed partial class MainPageViewModel
             Math.Clamp(volume, 0, 100));
     }
 
-    private async Task FadeLocalVolumeAsync(double fromVolume, double toVolume, double seconds)
+    private async Task FadeLocalVolumeAsync(MediaPlayer player, double fromVolume, double toVolume, double seconds)
     {
+        if (seconds <= 0.05)
+        {
+            player.Volume = Math.Clamp(toVolume, 0, 1);
+            return;
+        }
+
         var steps = Math.Clamp(Convert.ToInt32(Math.Ceiling(seconds * 12)), 12, 160);
         var delay = TimeSpan.FromMilliseconds(Math.Max(25, seconds * 1000 / steps));
 
@@ -715,7 +930,7 @@ public sealed partial class MainPageViewModel
         {
             var percent = step / (double)steps;
             var easedPercent = SmoothFadeEase(percent);
-            _localMediaPlayer.Volume = Math.Clamp(fromVolume + (toVolume - fromVolume) * easedPercent, 0, 1);
+            player.Volume = Math.Clamp(fromVolume + (toVolume - fromVolume) * easedPercent, 0, 1);
             if (step < steps)
             {
                 await Task.Delay(delay);
@@ -761,11 +976,7 @@ public sealed partial class MainPageViewModel
 
         if (runAutopilot)
         {
-            var transitioned = await MaybeTransitionDeckAsync(state);
-            if (transitioned)
-            {
-                SpotifyOperationMessage = $"Deck transition started the next track on {ActiveDeckName}.";
-            }
+            await MaybeTransitionDeckAsync(state);
         }
     }
 
@@ -811,27 +1022,31 @@ public sealed partial class MainPageViewModel
         }
     }
 
-    private async Task HandleLocalMediaEndedAsync()
+    private async Task HandleLocalMediaEndedAsync(string playerDeckName)
     {
-        var completedDeckName = NormalizeDeckName(_localPlaybackDeckName ?? _playingDeckName);
-        var completedItemId = _localPlaybackQueueItemId;
+        var playerDeck = NormalizeDeckName(playerDeckName);
+        var localState = LocalPlaybackStateForPlayerDeck(playerDeck);
+        var completedDeckName = NormalizeDeckName(localState.LogicalDeckName);
+        var completedItemId = localState.QueueItemId;
+        var completedTrack = localState.Track;
         if (completedItemId is null
             || !string.Equals(_playingDeckName, completedDeckName, StringComparison.Ordinal)
             || _playingDeckQueueItemId != completedItemId
             || ResolvePlayingDeckItem(completedDeckName)?.Source != SongSources.Local)
         {
             StartupLog.Write("Ignored stale local media ended event.");
+            ClearLocalPlaybackMarker(playerDeck);
             return;
         }
 
-        if (!HasLocalPlaybackActuallyStarted())
+        if (!HasLocalPlaybackActuallyStarted(completedDeckName, completedItemId))
         {
-            var elapsed = _localPlaybackRequestedAt is DateTimeOffset requestedAt
+            var elapsed = localState.RequestedAt is DateTimeOffset requestedAt
                 ? DateTimeOffset.UtcNow - requestedAt
                 : TimeSpan.Zero;
             StartupLog.Write($"Ignored premature local media ended event for {completedDeckName} item {completedItemId}; elapsed={elapsed.TotalMilliseconds:0}ms.");
             RestoreUnstartedLocalPlaybackCursor(completedDeckName, completedItemId.Value);
-            ClearLocalPlaybackMarker();
+            ClearLocalPlaybackMarker(playerDeck);
             IsPlaybackPlaying = false;
             SpotifyPlaybackStatus = "Local not started";
             CurrentOutputStatus = "Local file did not start. The deck position was kept.";
@@ -843,10 +1058,10 @@ public sealed partial class MainPageViewModel
             return;
         }
 
-        ClearLocalPlaybackMarker();
+        ClearLocalPlaybackMarker(playerDeck);
         IsPlaybackPlaying = false;
         SpotifyPlaybackStatus = "Local ended";
-        SpotifyProgressDisplay = SelectedLocalMusicTrack?.Duration is TimeSpan duration
+        SpotifyProgressDisplay = completedTrack?.Duration is TimeSpan duration
             ? $"{duration:m\\:ss} / {duration:m\\:ss}"
             : SpotifyProgressDisplay;
         SpotifyTimeRemaining = "0:00";
@@ -873,27 +1088,34 @@ public sealed partial class MainPageViewModel
         if (!transitioned)
         {
             ClearEndedPlayingDeckItemIfCurrent(completedDeckName, completedItemId.Value);
+            if (string.IsNullOrWhiteSpace(SpotifyOperationMessage))
+            {
+                SpotifyOperationMessage = RemovePlayedQueueItems
+                    ? "Local song ended. No next queued song is available on this deck."
+                    : "Local song ended. Queue loop is ready, but no playable track was found.";
+            }
         }
-
-        SpotifyOperationMessage = transitioned
-            ? $"Deck transition started the next track on {ActiveDeckName}."
-            : RemovePlayedQueueItems
-                ? "Local song ended. No next queued song is available on this deck."
-                : "Local song ended. Queue loop is ready, but no playable track was found.";
     }
 
     private async Task RefreshLocalPlaybackCoreAsync(bool runAutopilot)
     {
-        var session = _localMediaPlayer.PlaybackSession;
+        if (!TryGetActiveLocalPlayback(out var localState, out var player))
+        {
+            IsPlaybackPlaying = false;
+            RefreshDeckDisplayProperties();
+            return;
+        }
+
+        var session = player.PlaybackSession;
         var duration = session.NaturalDuration > TimeSpan.Zero
             ? session.NaturalDuration
-            : SelectedLocalMusicTrack?.Duration;
+            : localState.Track?.Duration;
         var position = session.Position < TimeSpan.Zero ? TimeSpan.Zero : session.Position;
 
         IsPlaybackPlaying = session.PlaybackState is MediaPlaybackState.Playing
             or MediaPlaybackState.Buffering
             or MediaPlaybackState.Opening;
-        ObserveLocalPlaybackProgress(position);
+        ObserveLocalPlaybackProgress(localState, position);
 
         if (duration is TimeSpan durationValue && durationValue > TimeSpan.Zero)
         {
@@ -935,18 +1157,14 @@ public sealed partial class MainPageViewModel
             : TransitionOverlapSeconds;
         var isNearEnd = remainingSeconds <= transitionTriggerSeconds;
         var hasEnded = session.PlaybackState is MediaPlaybackState.None or MediaPlaybackState.Paused
-            && HasLocalPlaybackActuallyStarted()
+            && HasLocalPlaybackActuallyStarted(localState.LogicalDeckName, localState.QueueItemId)
             && remainingSeconds <= LateTransitionSkipFadeSeconds;
 
         if (isNearEnd || hasEnded)
         {
-            var transitioned = await TryStartTransitionTargetAsync(
+            await TryStartTransitionTargetAsync(
                 skipFadeOut: hasEnded || remainingSeconds <= LateTransitionSkipFadeSeconds,
                 fadeOutSeconds: CreateTransitionFadeOutDuration(remainingSeconds));
-            if (transitioned)
-            {
-                SpotifyOperationMessage = $"Deck transition started the next track on {ActiveDeckName}.";
-            }
         }
     }
 

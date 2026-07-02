@@ -443,8 +443,11 @@ public sealed partial class MainPageViewModel
 
         if (hadLoadedDeckItem)
         {
-            var targetDeckName = ResolveTransitionDeckName();
-            SpotifyOperationMessage = $"No next queued song on {targetDeckName} for {SelectedTransitionMode}.";
+            if (string.IsNullOrWhiteSpace(SpotifyOperationMessage))
+            {
+                SpotifyOperationMessage = "No playable transition target is available.";
+            }
+
             return;
         }
 
@@ -478,31 +481,24 @@ public sealed partial class MainPageViewModel
 
     private async Task SetSpotifyVolumeAsync()
     {
-        await SetDeckOutputVolumeAsync(ActiveDeckName);
+        await SetMainOutputVolumeAsync();
     }
 
-    private async Task SetDeckOutputVolumeAsync(string deckName)
+    private async Task SetMainOutputVolumeAsync()
     {
-        var normalizedDeckName = NormalizeDeckName(deckName);
-        var volumePercent = ResolveDeckVolumePercent(normalizedDeckName);
+        var volumePercent = ResolveMainOutputVolumePercent();
         await SavePlaybackSettingsAsync();
-
-        if (!ShouldApplyVolumeToLiveOutput(normalizedDeckName))
-        {
-            SpotifyOperationMessage = $"{normalizedDeckName} volume saved at {FormatVolume(volumePercent)}. It will apply when that deck plays.";
-            return;
-        }
 
         if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
         {
-            _localMediaPlayer.Volume = ResolveDeckVolumeScalar(normalizedDeckName);
-            SpotifyOperationMessage = $"{normalizedDeckName} local volume set to {FormatVolume(volumePercent)}.";
+            ApplyLocalOutputLevelIfDeckIsLive(_playingDeckName);
+            SpotifyOperationMessage = $"Main output volume set to {FormatVolume(volumePercent)}. Deck faders control local mix level.";
             return;
         }
 
         if (SelectedPlaybackMode != SpotifyPlaybackModes.SpotifyConnect)
         {
-            SpotifyOperationMessage = $"{normalizedDeckName} volume saved at {FormatVolume(volumePercent)}. Open in Spotify App mode uses Spotify or Windows volume controls.";
+            SpotifyOperationMessage = $"Main output volume saved at {FormatVolume(volumePercent)}. Open in Spotify App mode uses Spotify or Windows volume controls.";
             return;
         }
 
@@ -512,7 +508,7 @@ public sealed partial class MainPageViewModel
             EnsureSpotifyConnectPlaybackMode();
             await _spotifyPlayerService.SetVolumeAsync(CurrentSpotifySettings, await ResolveSelectedDeviceIdAsync(), volumePercent);
             await SavePlaybackSettingsAsync();
-            SpotifyOperationMessage = $"Requested {normalizedDeckName} Spotify volume {FormatVolume(volumePercent)}. Device support may vary.";
+            SpotifyOperationMessage = $"Requested Spotify output volume {FormatVolume(volumePercent)}. Device support may vary.";
         });
     }
 
@@ -541,7 +537,10 @@ public sealed partial class MainPageViewModel
     {
         if (SelectedPlaybackMode == SpotifyPlaybackModes.LocalFilesFuture)
         {
-            SeekLocalPlaybackTo(_localMediaPlayer.PlaybackSession.Position + TimeSpan.FromSeconds(seconds));
+            var currentPosition = TryGetActiveLocalPlayback(out _, out var player)
+                ? player.PlaybackSession.Position
+                : TimeSpan.Zero;
+            SeekLocalPlaybackTo(currentPosition + TimeSpan.FromSeconds(seconds));
             SpotifyOperationMessage = seconds < 0
                 ? $"Rewound local playback {Math.Abs(seconds)} seconds."
                 : $"Fast-forwarded local playback {seconds} seconds.";

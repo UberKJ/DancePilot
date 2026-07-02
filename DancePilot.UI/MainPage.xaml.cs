@@ -41,10 +41,10 @@ public sealed partial class MainPage : Page
         PlaybackPositionSlider.KeyUp += PlaybackPositionSlider_KeyUp;
         VolumeSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(VolumeSlider_PointerReleased), true);
         VolumeSlider.KeyUp += VolumeSlider_KeyUp;
-        DeckAVolumeSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(DeckAVolumeSlider_PointerReleased), true);
-        DeckAVolumeSlider.KeyUp += DeckAVolumeSlider_KeyUp;
-        DeckBVolumeSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(DeckBVolumeSlider_PointerReleased), true);
-        DeckBVolumeSlider.KeyUp += DeckBVolumeSlider_KeyUp;
+        DeckAFaderSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(DeckAFaderSlider_PointerReleased), true);
+        DeckAFaderSlider.KeyUp += DeckAFaderSlider_KeyUp;
+        DeckBFaderSlider.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(DeckBFaderSlider_PointerReleased), true);
+        DeckBFaderSlider.KeyUp += DeckBFaderSlider_KeyUp;
         Unloaded += MainPage_Unloaded;
         StartupLog.Write("MainPage constructor complete");
     }
@@ -532,37 +532,37 @@ public sealed partial class MainPage : Page
         await ViewModel.CommitVolumeChangeAsync();
     }
 
-    private async void DeckAVolumeSlider_PointerReleased(object sender, PointerRoutedEventArgs e)
+    private async void DeckAFaderSlider_PointerReleased(object sender, PointerRoutedEventArgs e)
     {
-        await CommitDeckVolumeSliderAsync("Deck A");
+        await CommitDeckFaderSliderAsync("Deck A");
     }
 
-    private async void DeckAVolumeSlider_KeyUp(object sender, KeyRoutedEventArgs e)
+    private async void DeckAFaderSlider_KeyUp(object sender, KeyRoutedEventArgs e)
     {
         if (IsSliderCommitKey(e.Key))
         {
-            await CommitDeckVolumeSliderAsync("Deck A");
+            await CommitDeckFaderSliderAsync("Deck A");
             e.Handled = true;
         }
     }
 
-    private async void DeckBVolumeSlider_PointerReleased(object sender, PointerRoutedEventArgs e)
+    private async void DeckBFaderSlider_PointerReleased(object sender, PointerRoutedEventArgs e)
     {
-        await CommitDeckVolumeSliderAsync("Deck B");
+        await CommitDeckFaderSliderAsync("Deck B");
     }
 
-    private async void DeckBVolumeSlider_KeyUp(object sender, KeyRoutedEventArgs e)
+    private async void DeckBFaderSlider_KeyUp(object sender, KeyRoutedEventArgs e)
     {
         if (IsSliderCommitKey(e.Key))
         {
-            await CommitDeckVolumeSliderAsync("Deck B");
+            await CommitDeckFaderSliderAsync("Deck B");
             e.Handled = true;
         }
     }
 
-    private async Task CommitDeckVolumeSliderAsync(string deckName)
+    private async Task CommitDeckFaderSliderAsync(string deckName)
     {
-        await ViewModel.CommitDeckVolumeChangeAsync(deckName);
+        await ViewModel.CommitDeckFaderChangeAsync(deckName);
     }
 
     private static bool IsSliderCommitKey(VirtualKey key) =>

@@ -119,12 +119,57 @@ public sealed partial class MainPageViewModel
 
     private DancePilotQueueItem? FindTransitionTarget(string? deckName = null)
     {
-        var resolvedDeckName = NormalizeDeckName(deckName ?? ResolveTransitionDeckName());
-        return FindSelectedPendingDeckQueueItem(resolvedDeckName)
-            ?? GetNextDeckQueueItem(
-                resolvedDeckName,
-                includeFirstIfNoLastPlayed: true,
-                skipSamePlaybackSource: true);
+        if (!string.IsNullOrWhiteSpace(deckName))
+        {
+            var normalizedDeckName = NormalizeDeckName(deckName);
+            return ResolveTransitionDecision(
+                IsQueueItemRoutableForTransition,
+                requestedModeOverride: DancePilotTransitionModes.SameDeck,
+                currentDeckNameOverride: normalizedDeckName,
+                currentItemIdOverride: string.Equals(_playingDeckName, normalizedDeckName, StringComparison.Ordinal)
+                    ? _playingDeckQueueItemId
+                    : -1).ChosenItem;
+        }
+
+        return ResolveTransitionDecision(IsQueueItemRoutableForTransition).ChosenItem;
+    }
+
+    private DancePilotTransitionDecision ResolveTransitionDecision(
+        Func<DancePilotQueueItem, bool>? isPlayable = null,
+        string? requestedModeOverride = null,
+        string? currentDeckNameOverride = null,
+        int? currentItemIdOverride = null)
+    {
+        var currentDeckName = NormalizeDeckName(currentDeckNameOverride ?? _playingDeckName);
+        return DancePilotTransitionPlanner.Decide(new DancePilotTransitionRequest
+        {
+            CurrentDeckName = currentDeckName,
+            RequestedMode = requestedModeOverride ?? ResolveRequestedTransitionMode(),
+            CurrentItemId = currentItemIdOverride ?? _playingDeckQueueItemId,
+            DeckAQueue = _deckAQueue,
+            DeckBQueue = _deckBQueue,
+            SelectedDeckAItemId = _selectedDeckQueueItemIds.GetValueOrDefault("Deck A"),
+            SelectedDeckBItemId = _selectedDeckQueueItemIds.GetValueOrDefault("Deck B"),
+            LastPlayedDeckAItemId = _lastPlayedDeckQueueItemIds.GetValueOrDefault("Deck A"),
+            LastPlayedDeckBItemId = _lastPlayedDeckQueueItemIds.GetValueOrDefault("Deck B"),
+            IsPlayable = isPlayable
+        });
+    }
+
+    private static bool IsQueueItemRoutableForTransition(DancePilotQueueItem item) =>
+        DancePilotPlaybackRouter.Resolve(item).IsPlayable;
+
+    private string ResolveRequestedTransitionMode() =>
+        DeckTransitionEnabled
+            ? DancePilotTransitionModes.Normalize(SelectedTransitionMode)
+            : DancePilotTransitionModes.Off;
+
+    private string ResolveManualTransitionMode()
+    {
+        var normalized = DancePilotTransitionModes.Normalize(SelectedTransitionMode);
+        return normalized == DancePilotTransitionModes.Off
+            ? DancePilotTransitionModes.Auto
+            : normalized;
     }
 
     private DancePilotQueueItem? GetNextDeckQueueItem(
@@ -270,10 +315,14 @@ public sealed partial class MainPageViewModel
         StartupLog.Write($"Repaired restored local queue head on {normalizedDeckName}: {queueHead.Title}");
     }
 
-    private string ResolveTransitionDeckName() =>
-        SelectedTransitionMode == TransitionOppositeDeck
-            ? OppositeDeckName(_playingDeckName)
-            : _playingDeckName;
+    private string ResolveTransitionDeckName()
+    {
+        var requestedMode = ResolveRequestedTransitionMode();
+        return requestedMode == DancePilotTransitionModes.SameDeck
+            || requestedMode == DancePilotTransitionModes.Off
+            ? _playingDeckName
+            : OppositeDeckName(_playingDeckName);
+    }
 
     private DancePilotQueueItem? FindSelectedDeckQueueItem(string deckName)
     {

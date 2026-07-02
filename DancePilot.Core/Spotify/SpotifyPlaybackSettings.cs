@@ -24,7 +24,7 @@ public sealed record SpotifyPlaybackSettings
 
     public int DeckTransitionOverlapSeconds { get; init; } = 8;
 
-    public string DeckTransitionMode { get; init; } = "Opposite deck next item";
+    public string DeckTransitionMode { get; init; } = DancePilotTransitionModes.Auto;
 
     public int FadeInSeconds { get; init; } = 6;
 

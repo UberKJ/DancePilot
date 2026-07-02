@@ -48,5 +48,7 @@ internal sealed class AppServices
 
     public required MediaPlayer LocalMediaPlayer { get; init; }
 
+    public required MediaPlayer DeckBLocalMediaPlayer { get; init; }
+
     public required SqliteConnectionFactory ConnectionFactory { get; init; }
 }
