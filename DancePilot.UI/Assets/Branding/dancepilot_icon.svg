@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="88" fill="#05080B"/>
+  <rect x="36" y="36" width="440" height="440" rx="76" fill="#0B1117" stroke="#27313B" stroke-width="8"/>
+  <circle cx="256" cy="246" r="174" fill="#080E14" stroke="#1EA7FF" stroke-width="10"/>
+  <circle cx="256" cy="246" r="92" fill="#111922" stroke="#F4B400" stroke-width="7"/>
+  <circle cx="256" cy="246" r="24" fill="#F4B400"/>
+  <path d="M278 66 L410 340 L292 288 L214 404 L234 274 L116 222 Z" fill="#32E76A"/>
+  <circle cx="144" cy="350" r="18" fill="#F4B400"/>
+  <circle cx="208" cy="382" r="18" fill="#1EA7FF"/>
+  <circle cx="276" cy="388" r="18" fill="#B875FF"/>
+  <text x="256" y="444" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="74" font-weight="700" fill="#F5F8FA">DP</text>
+</svg>

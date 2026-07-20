@@ -13,4 +13,8 @@ public sealed record SongRecommendation
     public required string Key { get; init; }
 
     public required int MatchPercent { get; init; }
+
+    public string MixDisplay => $"{BPM} BPM / {Key}";
+
+    public string MatchDisplay => $"{MatchPercent}%";
 }

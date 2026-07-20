@@ -58,10 +58,23 @@ public sealed class SpotifyLibraryRepository
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT s.external_id, s.title, s.artist, s.album, s.duration_ms, s.external_uri, s.external_url, s.popularity
+            SELECT s.external_id,
+                   s.title,
+                   s.artist,
+                   s.album,
+                   s.duration_ms,
+                   s.external_uri,
+                   s.external_url,
+                   s.popularity,
+                   COALESCE(s.bpm, local.bpm) AS bpm,
+                   COALESCE(s.song_key, local.song_key) AS song_key,
+                   s.album_art_path
             FROM spotify_playlist_tracks pt
             INNER JOIN songs s
                 ON s.id = pt.song_id
+            LEFT JOIN songs local
+                ON local.id = s.likely_local_match_song_id
+                AND local.source = 'local'
             WHERE pt.spotify_playlist_id = $spotify_playlist_id
             ORDER BY pt.position, pt.id;
             """;
@@ -80,10 +93,75 @@ public sealed class SpotifyLibraryRepository
                 DurationMs = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
                 SpotifyUri = reader.IsDBNull(5) ? null : reader.GetString(5),
                 ExternalUrl = reader.IsDBNull(6) ? null : reader.GetString(6),
-                Popularity = reader.IsDBNull(7) ? null : reader.GetInt32(7)
+                Popularity = reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                BPM = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                MusicalKey = reader.IsDBNull(9) ? null : reader.GetString(9),
+                AlbumArtUrl = reader.IsDBNull(10) ? null : reader.GetString(10)
             });
         }
 
         return tracks;
+    }
+
+    public async Task<SpotifyTrackMetadata?> GetImportedTrackByUriAsync(
+        string spotifyUri,
+        string? spotifyTrackId = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(spotifyUri) && string.IsNullOrWhiteSpace(spotifyTrackId))
+        {
+            return null;
+        }
+
+        await _migrator.MigrateAsync(cancellationToken);
+
+        await using var connection = _connectionFactory.CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT external_id,
+                   title,
+                   artist,
+                   album,
+                   duration_ms,
+                   external_uri,
+                   external_url,
+                   popularity,
+                   bpm,
+                   song_key,
+                   album_art_path
+            FROM songs
+            WHERE source = 'spotify'
+              AND (
+                  lower(external_uri) = lower($spotify_uri)
+                  OR lower(external_id) = lower($spotify_track_id)
+              )
+            ORDER BY last_synced_at DESC, id DESC
+            LIMIT 1;
+            """;
+        command.Parameters.AddWithValue("$spotify_uri", spotifyUri);
+        command.Parameters.AddWithValue("$spotify_track_id", (object?)spotifyTrackId ?? DBNull.Value);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return new SpotifyTrackMetadata
+        {
+            SpotifyTrackId = reader.IsDBNull(0) ? string.Empty : reader.GetString(0),
+            Title = reader.IsDBNull(1) ? "Untitled Track" : reader.GetString(1),
+            Artist = reader.IsDBNull(2) ? "Unknown Artist" : reader.GetString(2),
+            Album = reader.IsDBNull(3) ? null : reader.GetString(3),
+            DurationMs = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
+            SpotifyUri = reader.IsDBNull(5) ? null : reader.GetString(5),
+            ExternalUrl = reader.IsDBNull(6) ? null : reader.GetString(6),
+            Popularity = reader.IsDBNull(7) ? null : reader.GetInt32(7),
+            BPM = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+            MusicalKey = reader.IsDBNull(9) ? null : reader.GetString(9),
+            AlbumArtUrl = reader.IsDBNull(10) ? null : reader.GetString(10)
+        };
     }
 }

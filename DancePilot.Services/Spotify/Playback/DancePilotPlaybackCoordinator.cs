@@ -51,6 +51,7 @@ public sealed class DancePilotPlaybackCoordinator
             SpotifyTrackId = string.Empty,
             Title = next.Title,
             Artist = next.Artist,
+            AlbumArtUrl = next.AlbumArtUrl,
             DurationMs = 0,
             SpotifyUri = next.ExternalUri
         };
@@ -62,15 +63,22 @@ public sealed class DancePilotPlaybackCoordinator
         DancePilotQueueItem queueItem,
         CancellationToken cancellationToken = default)
     {
-        await _playerService.PlayTrackAsync(settings, deviceId, queueItem.ExternalUri, cancellationToken: cancellationToken);
+        var route = DancePilotPlaybackRouter.Resolve(queueItem);
+        if (route.Kind != DancePilotPlaybackRouteKind.SpotifyConnect || string.IsNullOrWhiteSpace(route.SpotifyUri))
+        {
+            throw new InvalidOperationException(route.ValidationMessage ?? "Only Spotify queue items can be started through Spotify playback.");
+        }
+
+        await _playerService.PlayTrackAsync(settings, deviceId, route.SpotifyUri, cancellationToken: cancellationToken);
         await _queueRepository.MarkStatusAsync(queueItem.Id, "playing", cancellationToken);
         await _historyRepository.RecordStartedAsync(new SpotifyTrackMetadata
         {
             SpotifyTrackId = string.Empty,
             Title = queueItem.Title,
             Artist = queueItem.Artist,
-            DurationMs = 0,
-            SpotifyUri = queueItem.ExternalUri
+            AlbumArtUrl = queueItem.AlbumArtUrl,
+            DurationMs = queueItem.Duration is TimeSpan duration ? Convert.ToInt32(duration.TotalMilliseconds) : 0,
+            SpotifyUri = route.SpotifyUri
         }, "Started from DancePilot queue.", cancellationToken);
     }
 

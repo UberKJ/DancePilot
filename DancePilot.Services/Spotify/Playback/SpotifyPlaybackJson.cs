@@ -79,12 +79,34 @@ internal static class SpotifyPlaybackJson
             Album = track.TryGetProperty("album", out var album) && album.TryGetProperty("name", out var albumName)
                 ? albumName.GetString()
                 : null,
+            AlbumArtUrl = ReadAlbumArtUrl(track),
             DurationMs = track.TryGetProperty("duration_ms", out var duration) ? duration.GetInt32() : 0,
             SpotifyUri = track.TryGetProperty("uri", out var uri) ? uri.GetString() : null,
             ExternalUrl = ReadSpotifyExternalUrl(track),
             Popularity = track.TryGetProperty("popularity", out var popularity) ? popularity.GetInt32() : null,
             IsUnavailable = !track.TryGetProperty("id", out var trackId) || string.IsNullOrWhiteSpace(trackId.GetString())
         };
+    }
+
+    private static string? ReadAlbumArtUrl(JsonElement track)
+    {
+        if (!track.TryGetProperty("album", out var album)
+            || !album.TryGetProperty("images", out var images)
+            || images.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        return images.EnumerateArray()
+            .Select(image => new
+            {
+                Width = image.TryGetProperty("width", out var width) && width.TryGetInt32(out var value) ? value : 0,
+                Url = image.TryGetProperty("url", out var url) ? url.GetString() : null
+            })
+            .Where(image => !string.IsNullOrWhiteSpace(image.Url))
+            .OrderByDescending(image => image.Width)
+            .Select(image => image.Url)
+            .FirstOrDefault();
     }
 
     private static string? ReadSpotifyExternalUrl(JsonElement item)

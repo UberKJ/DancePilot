@@ -115,18 +115,115 @@ public sealed class DancePilotDatabaseMigrator
                 id INTEGER PRIMARY KEY,
                 source TEXT,
                 external_uri TEXT,
+                local_path TEXT,
                 song_id INTEGER,
                 title TEXT,
                 artist TEXT,
+                album TEXT,
+                album_art_url TEXT,
+                duration_ms INTEGER,
                 queue_position INTEGER,
                 status TEXT,
                 created_at TEXT
             );
             """, cancellationToken);
 
+        await AddColumnIfMissingAsync(connection, "queue", "local_path", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "queue", "album", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "queue", "album_art_url", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "queue", "duration_ms", "INTEGER", cancellationToken);
+
         await ExecuteAsync(connection, """
             CREATE INDEX IF NOT EXISTS ix_queue_status_position
             ON queue(status, queue_position);
+            """, cancellationToken);
+
+        await ExecuteAsync(connection, """
+            CREATE TABLE IF NOT EXISTS album_art_cache (
+                cache_key TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                external_uri TEXT,
+                title TEXT,
+                artist TEXT,
+                original_uri TEXT,
+                content_type TEXT,
+                image_bytes BLOB,
+                local_file_path TEXT,
+                updated_at TEXT
+            );
+            """, cancellationToken);
+
+        await ExecuteAsync(connection, """
+            CREATE INDEX IF NOT EXISTS ix_album_art_cache_source_external_uri
+            ON album_art_cache(source, external_uri);
+            """, cancellationToken);
+
+        await ExecuteAsync(connection, """
+            CREATE TABLE IF NOT EXISTS local_tracks (
+                id INTEGER PRIMARY KEY,
+                file_path TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                artist TEXT NOT NULL,
+                album TEXT,
+                duration_ms INTEGER,
+                extension TEXT NOT NULL,
+                folder TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                file_size INTEGER,
+                last_modified_utc TEXT NOT NULL,
+                album_art_path TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            """, cancellationToken);
+
+        await AddColumnIfMissingAsync(connection, "local_tracks", "file_path", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "title", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "artist", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "album", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "duration_ms", "INTEGER", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "extension", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "folder", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "file_name", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "file_size", "INTEGER", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "last_modified_utc", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "album_art_path", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "created_at", "TEXT", cancellationToken);
+        await AddColumnIfMissingAsync(connection, "local_tracks", "updated_at", "TEXT", cancellationToken);
+
+        await ExecuteAsync(connection, """
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_local_tracks_file_path
+            ON local_tracks(file_path);
+            """, cancellationToken);
+
+        await ExecuteAsync(connection, """
+            CREATE INDEX IF NOT EXISTS ix_local_tracks_search
+            ON local_tracks(title, artist, album, file_name);
+            """, cancellationToken);
+
+        await ExecuteAsync(connection, """
+            CREATE TABLE IF NOT EXISTS local_playlists (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            """, cancellationToken);
+
+        await ExecuteAsync(connection, """
+            CREATE TABLE IF NOT EXISTS local_playlist_tracks (
+                playlist_id INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                added_at TEXT NOT NULL,
+                PRIMARY KEY (playlist_id, file_path),
+                FOREIGN KEY (playlist_id) REFERENCES local_playlists(id) ON DELETE CASCADE
+            );
+            """, cancellationToken);
+
+        await ExecuteAsync(connection, """
+            CREATE INDEX IF NOT EXISTS ix_local_playlist_tracks_playlist_position
+            ON local_playlist_tracks(playlist_id, position);
             """, cancellationToken);
     }
 

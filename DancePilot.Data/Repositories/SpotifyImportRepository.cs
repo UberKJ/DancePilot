@@ -261,7 +261,7 @@ public sealed class SpotifyImportRepository
                 NULL,
                 NULL,
                 NULL,
-                NULL,
+                $album_art_path,
                 $source,
                 $external_id,
                 $external_uri,
@@ -278,6 +278,7 @@ public sealed class SpotifyImportRepository
                 duration = excluded.duration,
                 external_uri = excluded.external_uri,
                 external_url = excluded.external_url,
+                album_art_path = excluded.album_art_path,
                 album = excluded.album,
                 duration_ms = excluded.duration_ms,
                 popularity = excluded.popularity,
@@ -293,6 +294,7 @@ public sealed class SpotifyImportRepository
         command.Parameters.AddWithValue("$external_id", track.SpotifyTrackId);
         command.Parameters.AddWithValue("$external_uri", (object?)track.SpotifyUri ?? DBNull.Value);
         command.Parameters.AddWithValue("$external_url", (object?)track.ExternalUrl ?? DBNull.Value);
+        command.Parameters.AddWithValue("$album_art_path", (object?)track.AlbumArtUrl ?? DBNull.Value);
         command.Parameters.AddWithValue("$album", (object?)track.Album ?? DBNull.Value);
         command.Parameters.AddWithValue("$duration_ms", track.DurationMs);
         command.Parameters.AddWithValue("$popularity", (object?)track.Popularity ?? DBNull.Value);

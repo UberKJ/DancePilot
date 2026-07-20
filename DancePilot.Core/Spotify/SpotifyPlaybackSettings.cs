@@ -14,9 +14,33 @@ public sealed record SpotifyPlaybackSettings
 
     public int DefaultVolume { get; init; } = 70;
 
+    public int DeckAVolume { get; init; } = 70;
+
+    public int DeckBVolume { get; init; } = 70;
+
     public bool DeckTransitionEnabled { get; init; } = true;
 
     public int DeckTransitionSecondsBeforeEnd { get; init; } = 8;
 
-    public string DeckTransitionMode { get; init; } = "Same deck next item";
+    public int DeckTransitionOverlapSeconds { get; init; } = 8;
+
+    public string DeckTransitionMode { get; init; } = DancePilotTransitionModes.Auto;
+
+    public int FadeInSeconds { get; init; } = 6;
+
+    public int FadeOutSeconds { get; init; } = 10;
+
+    public bool AlwaysFadeSongs { get; init; } = true;
+
+    public bool StartTransitionOnFade { get; init; } = true;
+
+    public bool RemovePlayedQueueItems { get; init; } = true;
+
+    public int LowFrequencyGain { get; init; }
+
+    public int MidFrequencyGain { get; init; }
+
+    public int HighFrequencyGain { get; init; }
+
+    public int CrossfaderPosition { get; init; } = 50;
 }
