@@ -59,4 +59,15 @@ public sealed partial class LibraryManagerView : UserControl
         e.Handled = true;
         await ViewModel.SearchLocalMusicCommand.ExecuteAsync(null);
     }
+
+    private async void TidalSearchBox_KeyUp(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != VirtualKey.Enter || ViewModel is null)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await ViewModel.SearchTidalCommand.ExecuteAsync(null);
+    }
 }

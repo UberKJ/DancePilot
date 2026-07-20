@@ -85,4 +85,50 @@ public sealed record TrackDisplayItem
         BPM = track.BPM,
         MusicalKey = track.MusicalKey
     };
+
+    public static TrackDisplayItem FromSong(Song song)
+    {
+        var source = NormalizeSource(song.Source);
+        var isLocal = source == SongSources.Local;
+        var externalUri = FirstNonEmpty(song.ExternalUri, song.ExternalId, song.ExternalUrl);
+        return new TrackDisplayItem
+        {
+            Source = source,
+            Title = song.Title,
+            Artist = song.Artist,
+            Album = song.Album,
+            AlbumArt = song.AlbumArtPath,
+            Duration = song.Duration,
+            ExternalUri = isLocal ? null : externalUri,
+            LocalPath = isLocal ? FirstNonEmpty(song.ExternalUri, song.ExternalUrl) : null,
+            ProviderTrackId = isLocal ? null : song.ExternalId,
+            PlaybackHint = source switch
+            {
+                SongSources.Local => "Local file",
+                SongSources.Spotify => "Spotify Connect or Spotify app handoff",
+                SongSources.Tidal => "TIDAL playback is not enabled",
+                _ => $"{source} playback is not enabled"
+            },
+            IsPlayable = source switch
+            {
+                SongSources.Local => !string.IsNullOrWhiteSpace(FirstNonEmpty(song.ExternalUri, song.ExternalUrl)),
+                SongSources.Spotify => !string.IsNullOrWhiteSpace(externalUri),
+                _ => false
+            },
+            BPM = song.BPM,
+            MusicalKey = song.Key
+        };
+    }
+
+    private static string NormalizeSource(string? source) => source?.Trim().ToLowerInvariant() switch
+    {
+        SongSources.Spotify => SongSources.Spotify,
+        SongSources.Tidal => SongSources.Tidal,
+        SongSources.YouTube => SongSources.YouTube,
+        SongSources.Manual => SongSources.Manual,
+        _ => SongSources.Local
+    };
+
+    private static string? FirstNonEmpty(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim();
 }

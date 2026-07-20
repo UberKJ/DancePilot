@@ -14,6 +14,7 @@ public sealed partial class MainPageViewModel
     private const string LibrarySectionCollections = "Collections";
     private const string LibrarySectionLibraryHealth = "Library Health";
     private const string LibrarySectionImportCenter = "Import Center";
+    private const string LibrarySectionTidalCatalog = "Experimental TIDAL Catalog";
     private const string LibrarySectionAiAssistant = "AI Playlist Assistant";
 
     private string _selectedWorkspace = WorkspaceLiveEvent;
@@ -27,6 +28,7 @@ public sealed partial class MainPageViewModel
         LibrarySectionCollections,
         LibrarySectionLibraryHealth,
         LibrarySectionImportCenter,
+        LibrarySectionTidalCatalog,
         LibrarySectionAiAssistant
     ];
 
@@ -85,6 +87,7 @@ public sealed partial class MainPageViewModel
             if (SetProperty(ref _selectedLibraryManagerSection, normalized))
             {
                 OnPropertyChanged(nameof(MusicLibrarySectionVisibility));
+                OnPropertyChanged(nameof(TidalCatalogSectionVisibility));
                 OnPropertyChanged(nameof(LibraryManagerPlaceholderVisibility));
                 OnPropertyChanged(nameof(LibraryManagerPlaceholderTitle));
                 OnPropertyChanged(nameof(LibraryManagerPlaceholderDescription));
@@ -98,8 +101,13 @@ public sealed partial class MainPageViewModel
     public Visibility MusicLibrarySectionVisibility =>
         SelectedLibraryManagerSection == LibrarySectionMusicLibrary ? Visibility.Visible : Visibility.Collapsed;
 
+    public Visibility TidalCatalogSectionVisibility =>
+        SelectedLibraryManagerSection == LibrarySectionTidalCatalog ? Visibility.Visible : Visibility.Collapsed;
+
     public Visibility LibraryManagerPlaceholderVisibility =>
-        SelectedLibraryManagerSection == LibrarySectionMusicLibrary ? Visibility.Collapsed : Visibility.Visible;
+        SelectedLibraryManagerSection is LibrarySectionMusicLibrary or LibrarySectionTidalCatalog
+            ? Visibility.Collapsed
+            : Visibility.Visible;
 
     public string LibraryManagerPlaceholderTitle => SelectedLibraryManagerSection;
 

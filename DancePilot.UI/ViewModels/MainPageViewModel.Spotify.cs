@@ -903,14 +903,7 @@ public sealed partial class MainPageViewModel
     }
 
     private static string NormalizeSource(string source) =>
-        source?.Trim().ToLowerInvariant() switch
-        {
-            "youtube" => SourceYouTube,
-            "tidal" => SourceTidal,
-            "tital" => SourceTidal,
-            "local" => SourceLocal,
-            _ => SourceSpotify
-        };
+        LiveEventMusicSources.Normalize(source);
 
     private static bool IsSupportedPlaybackMode(string playbackMode)
     {

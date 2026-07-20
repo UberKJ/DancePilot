@@ -55,13 +55,14 @@ The Source Browser helps the operator find music.
 
 Initial sources:
 
-- Local Library
 - Spotify
+- TIDAL Experimental Catalog
+- Local Library
+- YouTube
 
 Future sources:
 
 - Plex
-- Tidal
 - Other providers
 
 Source browser actions:
@@ -70,6 +71,8 @@ Source browser actions:
 - Add selected song to Deck B
 - Play Now
 - Preview if supported later
+
+For TIDAL, the source browser is a non-playable handoff. Its only Live Event actions are Connect, Disconnect, and Open Catalog. Search, supported playlist views, and official TIDAL links remain in the isolated Library Manager catalog. TIDAL does not expose Play Now, Add to Deck, queue, transition, fader, or playback actions.
 
 ## Deck Workflow
 

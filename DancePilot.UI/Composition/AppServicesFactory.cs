@@ -5,6 +5,8 @@ using DancePilot.Services.Media;
 using DancePilot.Services.Spotify;
 using DancePilot.Services.Spotify.Auth;
 using DancePilot.Services.Spotify.Playback;
+using DancePilot.Services.Tidal;
+using DancePilot.Services.Tidal.Auth;
 using Windows.Media.Playback;
 
 namespace DancePilot.UI.Composition;
@@ -25,6 +27,10 @@ internal static class AppServicesFactory
         var httpClient = new HttpClient();
         var authService = new SpotifyAuthService(httpClient, tokenStore);
         var spotifyService = new SpotifyService(httpClient, tokenStore, authService);
+        var tidalSettingsStore = new TidalSettingsStore();
+        var tidalTokenStore = new EncryptedFileTidalTokenStore();
+        var tidalAuthService = new TidalAuthService(httpClient, tidalTokenStore);
+        var tidalCatalogService = new TidalCatalogService(httpClient, tidalTokenStore, tidalAuthService);
 
         var connectionFactory = new SqliteConnectionFactory(new DatabaseOptions
         {
@@ -45,6 +51,10 @@ internal static class AppServicesFactory
             SpotifyPlaylistImporter = spotifyPlaylistImporter,
             SpotifyPlayerService = spotifyPlayerService,
             SpotifyDeviceManager = new SpotifyDeviceManager(spotifyService),
+            TidalSettingsStore = tidalSettingsStore,
+            TidalTokenStore = tidalTokenStore,
+            TidalAuthService = tidalAuthService,
+            TidalCatalogService = tidalCatalogService,
             PlaybackCoordinator = new DancePilotPlaybackCoordinator(spotifyPlayerService, queueRepository, historyRepository),
             PlaybackSettingsRepository = new PlaybackSettingsRepository(connectionFactory),
             SessionStateRepository = new SessionStateRepository(connectionFactory),

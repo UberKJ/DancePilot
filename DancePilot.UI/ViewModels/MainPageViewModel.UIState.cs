@@ -305,6 +305,7 @@ public sealed partial class MainPageViewModel
                 OnPropertyChanged(nameof(SpotifySourceVisibility));
                 OnPropertyChanged(nameof(YouTubeSourceVisibility));
                 OnPropertyChanged(nameof(TidalSourceVisibility));
+                OnPropertyChanged(nameof(IsTidalSourceActive));
                 OnPropertyChanged(nameof(LocalSourceVisibility));
                 OnPropertyChanged(nameof(SpotifySourceColumnWidth));
                 OnPropertyChanged(nameof(RequestsColumnWidth));
@@ -332,19 +333,15 @@ public sealed partial class MainPageViewModel
         }
     }
 
-    public IReadOnlyList<string> SourceOptions { get; } =
-    [
-        SourceSpotify,
-        SourceYouTube,
-        SourceTidal,
-        SourceLocal
-    ];
+    public IReadOnlyList<string> SourceOptions { get; } = LiveEventMusicSources.All;
 
     public Visibility SpotifySourceVisibility => ActiveSource == SourceSpotify ? Visibility.Visible : Visibility.Collapsed;
 
     public Visibility YouTubeSourceVisibility => ActiveSource == SourceYouTube ? Visibility.Visible : Visibility.Collapsed;
 
     public Visibility TidalSourceVisibility => ActiveSource == SourceTidal ? Visibility.Visible : Visibility.Collapsed;
+
+    public bool IsTidalSourceActive => ActiveSource == SourceTidal;
 
     public Visibility LocalSourceVisibility => ActiveSource == SourceLocal ? Visibility.Visible : Visibility.Collapsed;
 
@@ -376,7 +373,7 @@ public sealed partial class MainPageViewModel
     {
         SourceLocal => "Local files from this Windows PC.",
         SourceYouTube => "YouTube connector view.",
-        SourceTidal => "Tidal connector view.",
+        SourceTidal => "TIDAL catalog access is available. DancePilot deck playback is not enabled.",
         _ => "Spotify playlists, search, and Connect playback."
     };
 

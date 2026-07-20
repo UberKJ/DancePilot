@@ -5,6 +5,7 @@ using DancePilot.UI.ViewModels;
 using DancePilot.UI.Diagnostics;
 using DancePilot.Core.Models;
 using DancePilot.Core.Spotify;
+using DancePilot.Services.Tidal;
 using Microsoft.UI;
 using Microsoft.UI.Xaml.Media;
 using Windows.ApplicationModel.DataTransfer;
@@ -844,6 +845,48 @@ public sealed partial class MainPage : Page
             MinHeight = 38
         });
 
+        var tidalEnabledToggle = new ToggleSwitch
+        {
+            Header = "Experimental catalog",
+            IsOn = ViewModel.ExperimentalTidalCatalogEnabled,
+            OnContent = "Enabled",
+            OffContent = "Disabled"
+        };
+        tidalEnabledToggle.Toggled += (_, _) =>
+            ViewModel.ExperimentalTidalCatalogEnabled = tidalEnabledToggle.IsOn;
+
+        var tidalClientIdBox = new TextBox
+        {
+            Header = "TIDAL Client ID",
+            Text = ViewModel.TidalClientId,
+            MinHeight = 40
+        };
+        tidalClientIdBox.TextChanged += (_, _) => ViewModel.TidalClientId = tidalClientIdBox.Text;
+
+        var tidalRedirectUriBox = new TextBox
+        {
+            Header = "TIDAL Redirect URI",
+            Text = ViewModel.TidalRedirectUri,
+            PlaceholderText = TidalDefaults.RedirectUri,
+            MinHeight = 40
+        };
+        tidalRedirectUriBox.TextChanged += (_, _) => ViewModel.TidalRedirectUri = tidalRedirectUriBox.Text;
+
+        var tidalCountryCodeBox = new TextBox
+        {
+            Header = "Country code",
+            Text = ViewModel.TidalCountryCode,
+            MaxLength = 2,
+            MinHeight = 40
+        };
+        tidalCountryCodeBox.TextChanged += (_, _) => ViewModel.TidalCountryCode = tidalCountryCodeBox.Text;
+
+        var tidalSettings = new StackPanel { Spacing = 10 };
+        tidalSettings.Children.Add(tidalEnabledToggle);
+        tidalSettings.Children.Add(tidalClientIdBox);
+        tidalSettings.Children.Add(tidalRedirectUriBox);
+        tidalSettings.Children.Add(tidalCountryCodeBox);
+
         var content = new StackPanel
         {
             Spacing = 12,
@@ -857,7 +900,10 @@ public sealed partial class MainPage : Page
         });
         content.Children.Add(CreateSettingsSection("SPOTIFY", ViewModel.SpotifyConnectionStatus, spotifySettings));
         content.Children.Add(CreateSettingsSection("LOCAL PLAYBACK", "Windows music folder and playable local audio files.", localSettings));
-        content.Children.Add(CreateSettingsSection("TIDAL", "Connector setup placeholder.", CreateDisabledSetupButton()));
+        content.Children.Add(CreateSettingsSection(
+            "TIDAL EXPERIMENT",
+            "Catalog authorization configuration only. No deck playback or public-event integration.",
+            tidalSettings));
         content.Children.Add(CreateSettingsSection("YOUTUBE", "Connector setup placeholder.", CreateDisabledSetupButton()));
         content.Children.Add(CreateSettingsSection("OTHER LOCAL APPS", "External app handoff and local playback providers.", CreateDisabledSetupButton()));
 
@@ -874,6 +920,7 @@ public sealed partial class MainPage : Page
         };
 
         await dialog.ShowAsync();
+        await ViewModel.SaveTidalSettingsAsync();
     }
 
     private static Button CreateDisabledSetupButton() =>

@@ -2,7 +2,9 @@
 
 ## Current Milestone
 
-Stabilize deck workflow, transitions, and operator confidence.
+Finish the TIDAL integration and make online-provider workflows consistent wherever provider capabilities allow.
+
+TIDAL is the active provider milestone. The target is for Spotify and TIDAL to share the same browsing, playlist, queue, deck, and player experience whenever the provider's supported and approved APIs permit it. Provider-specific limitations must be represented as capabilities rather than separate, inconsistent workflows.
 
 ## Core Complete or Mostly Complete
 
@@ -19,7 +21,7 @@ Stabilize deck workflow, transitions, and operator confidence.
 - [x] Safer transition behavior for one-deck and two-deck use
 - [x] Repository cleanup for generated build artifacts
 
-## Current Sprint: Operator Experience Pass
+## Supporting Sprint: Operator Experience Pass
 
 - [ ] Verify deck fader/level controls have real behavior or are clearly labeled as future/limited
 - [ ] Improve current/next track readability from a distance
@@ -27,11 +29,40 @@ Stabilize deck workflow, transitions, and operator confidence.
 - [ ] Confirm transition status messages are clear during live use
 - [ ] Confirm queue counts and deck state remain accurate during transitions
 
-## Next Major Milestone: Library Manager
+## Active Major Milestone: TIDAL Provider Integration
+
+Already implemented in the current working milestone:
+
+- [x] OAuth authorization code flow with PKCE
+- [x] Encrypted token storage, refresh, and disconnect
+- [x] Public catalog health check
+- [x] Track, album, and artist search and hydration
+- [x] My Collection and owned-playlist discovery
+- [x] Playlist-track paging with music-track order preserved
+- [x] Sanitized request diagnostics and detailed error mapping
+- [x] Isolated TIDAL catalog workspace and Live Event source handoff
+- [x] Keep TIDAL out of playback, decks, queues, provider blending, and AI until the required capability and approval gates are satisfied
+
+Next implementation steps:
+
+- [ ] Complete real-account authorization and catalog smoke testing after the development-environment upgrade
+- [ ] Harden catalog, playlist, artwork, empty-state, reconnect, and rate-limit behavior from operator testing
+- [ ] Introduce a shared provider capability contract for search, library, playlists, queue, deck, and playback actions
+- [ ] Present Spotify and TIDAL through consistent online-source browsing and playlist UI where their capabilities match
+- [ ] Map TIDAL catalog tracks into provider-neutral display and selection models without merging or persisting restricted TIDAL data incorrectly
+- [ ] Confirm the approved TIDAL partner/playback route for DancePilot and document the decision
+- [ ] If approved, integrate only the official, unmodified TIDAL playback route and add TIDAL queue/deck/player support through the shared provider contract
+- [ ] Run provider-parity tests plus manual authorization, catalog, playlist, queue, deck, transition, and player tests for every enabled capability
+
+Full TIDAL DJ playback is an approval-gated part of this milestone. A TIDAL DJ subscription enables playback through approved DJ integrations; it does not by itself expose unrestricted playback to a new application through the public catalog API.
+
+See `docs/TIDAL_FEASIBILITY.md` and `docs/PROVIDER_MODEL.md`.
+
+## Following Major Milestone: Library Manager
 
 Library Manager is the planning workspace for DancePilot.
 
-The Local Library Manager remains the next implementation milestone. Experimental provider work must not displace it.
+The Local Library Manager remains the planning workspace and resumes as the next major milestone after the TIDAL provider pass.
 
 Live Event remains focused on decks, queues, transitions, and playback.
 Library Manager supports planning and preparation.
@@ -48,13 +79,13 @@ Planned sections:
 
 See `docs/LIBRARY_MANAGER.md`.
 
-## Next Sprint: Library Manager Shell
+## Completed Sprint: Library Manager Shell
 
-- [ ] Add a Library Manager navigation entry or workspace shell
-- [ ] Show current local library data in a planning-focused view
-- [ ] Keep Live Event workflow unchanged
-- [ ] Add placeholder sections for Playlist Builder, Event Templates, Collections, Library Health, Import Center, and AI Assistant
-- [ ] Avoid adding provider integrations in this sprint
+- [x] Add a Library Manager navigation entry or workspace shell
+- [x] Show current local library data in a planning-focused view
+- [x] Keep Live Event workflow unchanged
+- [x] Add placeholder sections for Playlist Builder, Event Templates, Collections, Library Health, Import Center, and AI Assistant
+- [x] Complete the shell before beginning the later TIDAL integration pass
 
 ## Backlog: Playlist Builder
 
@@ -100,17 +131,23 @@ Only after core deck workflow and local library behavior are stable.
 
 See `docs/PROVIDER_MODEL.md`.
 
-## Experimental Provider Feasibility
+## TIDAL Feasibility and Approval Gates
 
-TIDAL is an experimental feasibility candidate, not committed Live Event support.
+TIDAL catalog integration is the active provider milestone. Live Event playback remains approval-gated; until that gate is satisfied, its Live Event source entry is limited to connection status and navigation to the catalog.
 
 - [x] Document TIDAL feasibility guardrails
-- [ ] Evaluate authorization in an isolated experiment
-- [ ] Evaluate catalog access in an isolated experiment
-- [ ] Record the project owner's written approval decision
-- [ ] Only then reconsider TIDAL Live Event integration
+- [x] Evaluate authorization in an isolated experiment
+- [x] Evaluate catalog access in an isolated experiment
+- [x] Add an isolated Live Event source-selector handoff with no playback actions
+- [x] Repair public API health, JSON:API catalog search, and relationship hydration
+- [x] Add scope-gated My Collection, owned-playlist, and playlist-track loading
+- [x] Record the project owner's direction that finishing TIDAL and provider parity are the next product priority
+- [ ] Obtain and record TIDAL's approval for DancePilot's intended public-event, multi-provider, and DJ playback use
+- [ ] Only then enable TIDAL deck, queue, transition, or playback capabilities through an approved official integration
 
 TIDAL must not be added to decks, queues, playback, mixed provider result lists, or AI workflows during feasibility work. See `docs/TIDAL_FEASIBILITY.md`.
+
+Local Library Manager resumes after the active TIDAL provider milestone.
 
 ## Repository and Maintenance
 

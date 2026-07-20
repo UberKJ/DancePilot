@@ -695,20 +695,22 @@ public sealed partial class MainPageViewModel
     private void QueueSongToDeck(Song song, string deckName)
     {
         var normalizedDeckName = NormalizeDeckName(deckName);
+        var track = TrackDisplayItem.FromSong(song);
         QueueToDeck(new DancePilotQueueItem
         {
             Id = NextDeckQueueId(),
             DeckName = normalizedDeckName,
-            Source = SongSources.Local,
-            LocalPath = song.ExternalUri ?? song.ExternalUrl,
+            Source = track.Source,
+            ExternalUri = ResolveTrackDisplayExternalUri(track),
+            LocalPath = ResolveTrackDisplayLocalPath(track),
             SongId = song.Id,
-            Title = song.Title,
-            Artist = song.Artist,
-            Album = song.Album,
-            AlbumArtUrl = song.AlbumArtPath,
-            Duration = song.Duration,
-            BPM = song.BPM,
-            MusicalKey = song.Key,
+            Title = track.Title,
+            Artist = track.Artist,
+            Album = track.Album,
+            AlbumArtUrl = ResolveTrackDisplayAlbumArt(track),
+            Duration = track.Duration,
+            BPM = track.BPM,
+            MusicalKey = track.MusicalKey,
             Status = "pending"
         }, normalizedDeckName);
     }

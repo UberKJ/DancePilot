@@ -4,6 +4,8 @@ using DancePilot.Services.LocalMusic;
 using DancePilot.Services.Media;
 using DancePilot.Services.Spotify;
 using DancePilot.Services.Spotify.Playback;
+using DancePilot.Services.Tidal;
+using DancePilot.Services.Tidal.Auth;
 using Windows.Media.Playback;
 
 namespace DancePilot.UI.Composition;
@@ -21,6 +23,14 @@ internal sealed class AppServices
     public required SpotifyPlayerService SpotifyPlayerService { get; init; }
 
     public required SpotifyDeviceManager SpotifyDeviceManager { get; init; }
+
+    public required TidalSettingsStore TidalSettingsStore { get; init; }
+
+    public required ITidalTokenStore TidalTokenStore { get; init; }
+
+    public required TidalAuthService TidalAuthService { get; init; }
+
+    public required TidalCatalogService TidalCatalogService { get; init; }
 
     public required DancePilotPlaybackCoordinator PlaybackCoordinator { get; init; }
 

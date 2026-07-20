@@ -600,11 +600,28 @@
                                 <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource CardBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="10" Visibility="{x:Bind ViewModel.TidalSourceVisibility, Mode=OneWay}">
                                     <StackPanel Spacing="7">
                                         <Grid>
-                                            <TextBlock Text="TIDAL" Foreground="{StaticResource BlueBrush}" FontSize="13" FontWeight="Bold" />
-                                            <TextBlock Text="Setup placeholder" Foreground="{StaticResource MutedTextBrush}" FontSize="12" HorizontalAlignment="Right" />
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="190" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="TIDAL" Foreground="{StaticResource BlueBrush}" FontSize="13" FontWeight="Bold" />
+                                                <TextBlock Text="Experimental Catalog" Foreground="{StaticResource SecondaryTextBrush}" FontSize="11" />
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.TidalConnectionStatus, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" HorizontalAlignment="Right" TextAlignment="Right" TextWrapping="WrapWholeWords" />
                                         </Grid>
-                                        <TextBox PlaceholderText="Tidal client ID / future connector setting" Style="{StaticResource InputTextBoxStyle}" MinHeight="34" />
-                                        <Button Content="PREPARE TIDAL CONNECTOR" Style="{StaticResource ChromeButtonStyle}" MinHeight="34" />
+                                        <TextBlock Text="Content provided by TIDAL" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                        <TextBlock Text="TIDAL catalog access is available. DancePilot deck playback is not enabled." Foreground="{StaticResource SecondaryTextBrush}" FontSize="11" TextWrapping="WrapWholeWords" />
+                                        <TextBlock Text="{x:Bind ViewModel.TidalOperationMessage, Mode=OneWay}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextWrapping="WrapWholeWords" />
+                                        <Grid ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Button Command="{x:Bind ViewModel.ConnectTidalCommand}" Content="CONNECT" Style="{StaticResource ChromeButtonStyle}" MinHeight="34" Visibility="{x:Bind ViewModel.TidalConnectActionVisibility, Mode=OneWay}" />
+                                            <Button Command="{x:Bind ViewModel.DisconnectTidalCommand}" Content="DISCONNECT" Style="{StaticResource ChromeButtonStyle}" MinHeight="34" Visibility="{x:Bind ViewModel.TidalDisconnectActionVisibility, Mode=OneWay}" />
+                                            <Button Grid.Column="1" Command="{x:Bind ViewModel.OpenTidalCatalogCommand}" Content="OPEN CATALOG" Style="{StaticResource ChromeButtonStyle}" MinHeight="34" />
+                                        </Grid>
                                     </StackPanel>
                                 </Border>
 

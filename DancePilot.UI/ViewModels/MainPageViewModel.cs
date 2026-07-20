@@ -10,6 +10,7 @@ using DancePilot.Services.LocalMusic;
 using DancePilot.Services.Media;
 using DancePilot.Services.Spotify;
 using DancePilot.Services.Spotify.Playback;
+using DancePilot.Services.Tidal;
 using DancePilot.UI.Composition;
 using DancePilot.UI.Diagnostics;
 using Microsoft.UI;
@@ -25,10 +26,10 @@ namespace DancePilot.UI.ViewModels;
 
 public sealed partial class MainPageViewModel : ObservableObject
 {
-    private const string SourceSpotify = "Spotify";
-    private const string SourceYouTube = "YouTube";
-    private const string SourceTidal = "Tidal";
-    private const string SourceLocal = "Local";
+    private const string SourceSpotify = LiveEventMusicSources.Spotify;
+    private const string SourceYouTube = LiveEventMusicSources.YouTube;
+    private const string SourceTidal = LiveEventMusicSources.Tidal;
+    private const string SourceLocal = LiveEventMusicSources.Local;
     private const string DefaultCurrentAlbumArtPath = "ms-appx:///Assets/AlbumDanceFloor.png";
     private const string DefaultNextAlbumArtPath = "ms-appx:///Assets/AlbumDanceFloor.png";
     private const string DefaultLocalAlbumArtPath = "ms-appx:///Assets/AlbumDanceFloor.png";
@@ -193,6 +194,10 @@ public sealed partial class MainPageViewModel : ObservableObject
         _spotifyPlaylistImporter = services.SpotifyPlaylistImporter;
         _spotifyPlayerService = services.SpotifyPlayerService;
         _spotifyDeviceManager = services.SpotifyDeviceManager;
+        _tidalSettingsStore = services.TidalSettingsStore;
+        _tidalTokenStore = services.TidalTokenStore;
+        _tidalAuthService = services.TidalAuthService;
+        _tidalCatalogService = services.TidalCatalogService;
         _playbackSettingsRepository = services.PlaybackSettingsRepository;
         _sessionStateRepository = services.SessionStateRepository;
         _spotifyLibraryRepository = services.SpotifyLibraryRepository;
@@ -265,6 +270,21 @@ public sealed partial class MainPageViewModel : ObservableObject
         ClearPendingQueueCommand = new RelayCommand(() => ClearPendingQueue(QueueViewDeckName));
         ClearDeckAQueueCommand = new RelayCommand(() => ClearDeckQueue("Deck A"));
         ClearDeckBQueueCommand = new RelayCommand(() => ClearDeckQueue("Deck B"));
+        ConnectTidalCommand = new AsyncRelayCommand(ConnectTidalAsync);
+        ReconnectTidalCommand = new AsyncRelayCommand(ReconnectTidalAsync);
+        DisconnectTidalCommand = new AsyncRelayCommand(DisconnectTidalAsync);
+        RefreshTidalConnectionCommand = new AsyncRelayCommand(RefreshTidalConnectionAsync);
+        CheckTidalApiCommand = new AsyncRelayCommand(CheckTidalApiAsync);
+        CopyTidalDiagnosticCommand = new RelayCommand(CopyTidalDiagnostic);
+        SearchTidalCommand = new AsyncRelayCommand(SearchTidalAsync);
+        LoadTidalPlaylistsCommand = new AsyncRelayCommand(LoadTidalPlaylistsAsync);
+        LoadSelectedTidalPlaylistTracksCommand = new AsyncRelayCommand(LoadSelectedTidalPlaylistTracksAsync);
+        OpenSelectedTidalTrackCommand = new AsyncRelayCommand(OpenSelectedTidalTrackAsync);
+        OpenSelectedTidalAlbumCommand = new AsyncRelayCommand(OpenSelectedTidalAlbumAsync);
+        OpenSelectedTidalArtistCommand = new AsyncRelayCommand(OpenSelectedTidalArtistAsync);
+        OpenSelectedTidalPlaylistCommand = new AsyncRelayCommand(OpenSelectedTidalPlaylistAsync);
+        OpenSelectedTidalItemCommand = new AsyncRelayCommand(OpenSelectedTidalItemAsync);
+        OpenTidalCatalogCommand = new RelayCommand(OpenTidalCatalog);
 
         _playbackTimer = new DispatcherTimer
         {
@@ -319,6 +339,11 @@ public sealed partial class MainPageViewModel : ObservableObject
             var spotifySettings = await _spotifySettingsStore.LoadAsync();
             SpotifyClientId = spotifySettings.ClientId;
             SpotifyRedirectUri = spotifySettings.RedirectUri;
+            var tidalSettings = await _tidalSettingsStore.LoadAsync();
+            TidalClientId = tidalSettings.ClientId;
+            TidalRedirectUri = tidalSettings.RedirectUri;
+            TidalCountryCode = tidalSettings.CountryCode;
+            ExperimentalTidalCatalogEnabled = tidalSettings.ExperimentalCatalogEnabled;
 
             await new DancePilotDatabaseMigrator(connectionFactory).MigrateAsync();
             await LoadPlaybackSettingsAsync();
@@ -327,6 +352,7 @@ public sealed partial class MainPageViewModel : ObservableObject
             await RestoreSessionStateAsync();
             await LoadSavedLocalLibraryAsync();
             await RefreshSpotifyConnectionStatusAsync();
+            await RefreshTidalConnectionAsync();
 
             StartupLog.Write("MainPageViewModel async initialization complete");
         }
