@@ -31,6 +31,8 @@ Stabilize deck workflow, transitions, and operator confidence.
 
 Library Manager is the planning workspace for DancePilot.
 
+The Local Library Manager remains the next implementation milestone. Experimental provider work must not displace it.
+
 Live Event remains focused on decks, queues, transitions, and playback.
 Library Manager supports planning and preparation.
 
@@ -93,11 +95,22 @@ Only after core deck workflow and local library behavior are stable.
 - [ ] Provider capability model
 - [ ] Plex investigation
 - [ ] Jellyfin investigation
-- [ ] Tidal investigation
 - [ ] Other provider investigation
 - [ ] Smarter event recommendations
 
 See `docs/PROVIDER_MODEL.md`.
+
+## Experimental Provider Feasibility
+
+TIDAL is an experimental feasibility candidate, not committed Live Event support.
+
+- [x] Document TIDAL feasibility guardrails
+- [ ] Evaluate authorization in an isolated experiment
+- [ ] Evaluate catalog access in an isolated experiment
+- [ ] Record the project owner's written approval decision
+- [ ] Only then reconsider TIDAL Live Event integration
+
+TIDAL must not be added to decks, queues, playback, mixed provider result lists, or AI workflows during feasibility work. See `docs/TIDAL_FEASIBILITY.md`.
 
 ## Repository and Maintenance
 
@@ -112,6 +125,7 @@ See `docs/PROVIDER_MODEL.md`.
 - `docs/OPERATOR_WORKFLOW.md`
 - `docs/LIBRARY_MANAGER.md`
 - `docs/PROVIDER_MODEL.md`
+- `docs/TIDAL_FEASIBILITY.md`
 - `docs/UI_GUIDELINES.md`
 
 ## Development Rules
