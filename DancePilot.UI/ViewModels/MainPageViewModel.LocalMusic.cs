@@ -310,6 +310,7 @@ public sealed partial class MainPageViewModel
         SelectedLocalMusicTrack = LocalMusicTracks.FirstOrDefault(track =>
             string.Equals(track.FilePath, selectedFilePath, StringComparison.OrdinalIgnoreCase))
             ?? LocalMusicTracks.FirstOrDefault();
+        NotifyLibraryManagerLocalLibraryChanged();
     }
 
     private void ReplaceLocalMusicResults(IEnumerable<LocalMusicTrack> tracks)
@@ -324,6 +325,7 @@ public sealed partial class MainPageViewModel
         SelectedLocalMusicTrack = LocalMusicTracks.FirstOrDefault(track =>
             string.Equals(track.FilePath, selectedFilePath, StringComparison.OrdinalIgnoreCase))
             ?? LocalMusicTracks.FirstOrDefault();
+        NotifyLibraryManagerLocalLibraryChanged();
     }
 
     private void UpdateLocalLibraryDisplay(LocalLibrarySettings settings)
@@ -337,6 +339,7 @@ public sealed partial class MainPageViewModel
         OnPropertyChanged(nameof(LocalLibraryLastScanDisplay));
         OnPropertyChanged(nameof(LocalLibraryAlbumArtCacheDisplay));
         OnPropertyChanged(nameof(LocalLibraryScanButtonText));
+        NotifyLibraryManagerLocalLibraryChanged();
     }
 
     private IEnumerable<LocalMusicTrack> SortLocalMusicTracks(IEnumerable<LocalMusicTrack> tracks) =>

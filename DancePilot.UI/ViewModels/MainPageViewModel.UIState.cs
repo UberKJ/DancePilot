@@ -165,6 +165,7 @@ public sealed partial class MainPageViewModel
         {
             if (SetProperty(ref _selectedLocalMusicTrack, value))
             {
+                NotifyLibraryManagerSelectedSongChanged();
                 QueueSessionStateSave();
             }
         }
@@ -263,6 +264,7 @@ public sealed partial class MainPageViewModel
                 : value.Trim();
             if (SetProperty(ref _localMusicFolderPath, normalized))
             {
+                NotifyLibraryManagerLocalLibraryChanged();
                 QueueSessionStateSave();
             }
         }

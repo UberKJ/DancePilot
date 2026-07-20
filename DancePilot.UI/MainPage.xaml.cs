@@ -64,6 +64,16 @@ public sealed partial class MainPage : Page
         return viewModel;
     }
 
+    private void LiveEventWorkspaceButton_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.ShowLiveEventWorkspace();
+    }
+
+    private void LibraryManagerWorkspaceButton_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.ShowLibraryManagerWorkspace();
+    }
+
     private void SpotifyPreviewTracksList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
         var tracks = GetSelectedItems<SpotifyTrackMetadata>(SpotifyPreviewTracksList);

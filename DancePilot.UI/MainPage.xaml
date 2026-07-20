@@ -6,6 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:models="using:DancePilot.Core.Models"
     xmlns:spotify="using:DancePilot.Core.Spotify"
+    xmlns:views="using:DancePilot.UI.Views"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     Background="#05080B"
     RequestedTheme="Dark"
@@ -93,10 +94,13 @@
         </Style>
     </Page.Resources>
 
-    <Grid
-        Padding="12"
-        Background="{StaticResource AppBackgroundBrush}"
-        RowSpacing="10">
+    <Grid Background="{StaticResource AppBackgroundBrush}">
+        <Grid
+            x:Name="LiveEventWorkspace"
+            Padding="12"
+            Background="{StaticResource AppBackgroundBrush}"
+            RowSpacing="10"
+            Visibility="{x:Bind ViewModel.LiveEventWorkspaceVisibility, Mode=OneWay}">
             <Grid.RowDefinitions>
                 <RowDefinition Height="58" />
                 <RowDefinition Height="390" />
@@ -131,10 +135,44 @@
                         </StackPanel>
                     </StackPanel>
 
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
-                        <TextBlock Text="{x:Bind ViewModel.SpotifyOperationMessage, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" TextTrimming="CharacterEllipsis" />
-                        <TextBlock Text="Double-click source rows to queue; double-click queue rows for actions." Foreground="{StaticResource MutedTextBrush}" FontSize="12" />
-                    </StackPanel>
+                    <Grid Grid.Column="1" VerticalAlignment="Center" ColumnSpacing="14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center" Spacing="2">
+                            <TextBlock Text="{x:Bind ViewModel.SpotifyOperationMessage, Mode=OneWay}" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="Double-click source rows to queue; double-click queue rows for actions." Foreground="{StaticResource MutedTextBrush}" FontSize="12" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Spacing="8">
+                            <Button
+                                Click="LiveEventWorkspaceButton_Click"
+                                Style="{StaticResource ChromeButtonStyle}"
+                                MinHeight="34"
+                                Padding="10,4"
+                                Background="{x:Bind ViewModel.LiveEventWorkspaceButtonBackground, Mode=OneWay}"
+                                BorderBrush="{x:Bind ViewModel.LiveEventWorkspaceButtonBorderBrush, Mode=OneWay}"
+                                Foreground="{x:Bind ViewModel.LiveEventWorkspaceButtonForeground, Mode=OneWay}">
+                                <StackPanel Orientation="Horizontal" Spacing="7">
+                                    <FontIcon Glyph="&#xE768;" FontSize="14" />
+                                    <TextBlock Text="LIVE EVENT" />
+                                </StackPanel>
+                            </Button>
+                            <Button
+                                Click="LibraryManagerWorkspaceButton_Click"
+                                Style="{StaticResource ChromeButtonStyle}"
+                                MinHeight="34"
+                                Padding="10,4"
+                                Background="{x:Bind ViewModel.LibraryManagerWorkspaceButtonBackground, Mode=OneWay}"
+                                BorderBrush="{x:Bind ViewModel.LibraryManagerWorkspaceButtonBorderBrush, Mode=OneWay}"
+                                Foreground="{x:Bind ViewModel.LibraryManagerWorkspaceButtonForeground, Mode=OneWay}">
+                                <StackPanel Orientation="Horizontal" Spacing="7">
+                                    <FontIcon Glyph="&#xE8F1;" FontSize="14" />
+                                    <TextBlock Text="LIBRARY MANAGER" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
 
                     <Border Grid.Column="2" Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource GreenBrush}" BorderThickness="1" CornerRadius="6" Padding="12,6">
                         <StackPanel VerticalAlignment="Center" Spacing="2">
@@ -1305,5 +1343,10 @@
                     <Button Grid.Column="5" Command="{x:Bind ViewModel.EmergencyStopCommand}" Content="EMERGENCY PAUSE" Style="{StaticResource DangerButtonStyle}" MinHeight="56" VerticalAlignment="Center" />
                 </Grid>
             </Border>
+        </Grid>
+
+        <views:LibraryManagerView
+            DataContext="{x:Bind ViewModel}"
+            Visibility="{x:Bind ViewModel.LibraryManagerWorkspaceVisibility, Mode=OneWay}" />
     </Grid>
 </Page>
